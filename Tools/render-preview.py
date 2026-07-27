@@ -12,9 +12,11 @@ from mathutils import Vector
 def parse_args():
     separator = sys.argv.index("--") if "--" in sys.argv else len(sys.argv)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source-fbx", required=True)
-    parser.add_argument("--output-png", required=True)
+    parser.add_argument("--source-fbx")
+    parser.add_argument("--output-png")
     parser.add_argument("--bindings-json")
+    parser.add_argument("--manifest-json")
+    parser.add_argument("--resolution", type=int, default=128)
     return parser.parse_args(sys.argv[separator + 1 :])
 
 
@@ -91,7 +93,7 @@ def scene_bounds(objects):
     return (minimum + maximum) * 0.5, maximum - minimum
 
 
-def render(output_path, mesh_objects):
+def render(output_path, mesh_objects, resolution):
     center, size = scene_bounds(mesh_objects)
     radius = max(size.length * 0.5, 0.01)
 
@@ -122,8 +124,8 @@ def render(output_path, mesh_objects):
 
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE_NEXT"
-    scene.render.resolution_x = 256
-    scene.render.resolution_y = 256
+    scene.render.resolution_x = resolution
+    scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
@@ -133,12 +135,9 @@ def render(output_path, mesh_objects):
     bpy.ops.render.render(write_still=True)
 
 
-def main():
-    args = parse_args()
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=False)
+def render_job(source_fbx, output_png, bindings, resolution):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.fbx(filepath=args.source_fbx, use_anim=False)
+    bpy.ops.import_scene.fbx(filepath=source_fbx, use_anim=False)
     meshes = [
         obj
         for obj in bpy.context.scene.objects
@@ -150,13 +149,36 @@ def main():
     if not meshes:
         raise RuntimeError("FBX contains no renderable meshes")
 
+    bind_materials(bindings, meshes)
+    os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
+    render(output_png, meshes, resolution)
+
+
+def main():
+    args = parse_args()
+    if args.resolution < 64 or args.resolution > 512:
+        raise ValueError("Resolution must be between 64 and 512 pixels")
+
+    if args.manifest_json:
+        with open(args.manifest_json, "r", encoding="utf-8-sig") as stream:
+            jobs = json.load(stream)
+        for index, job in enumerate(jobs, start=1):
+            print(f"Synty preview {index}/{len(jobs)}: {job['source_fbx']}")
+            render_job(
+                job["source_fbx"],
+                job["output_png"],
+                job.get("bindings", []),
+                args.resolution,
+            )
+        return
+
+    if not args.source_fbx or not args.output_png:
+        raise ValueError("--source-fbx and --output-png are required without --manifest-json")
     bindings = []
     if args.bindings_json:
         with open(args.bindings_json, "r", encoding="utf-8-sig") as stream:
             bindings = json.load(stream)
-    bind_materials(bindings, meshes)
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_png)), exist_ok=True)
-    render(args.output_png, meshes)
+    render_job(args.source_fbx, args.output_png, bindings, args.resolution)
 
 
 if __name__ == "__main__":

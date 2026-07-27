@@ -3,7 +3,8 @@ param(
 	[Parameter(Mandatory = $true)][string] $PackRoot,
 	[Parameter(Mandatory = $true)][string] $OutputPng,
 	[string[]] $TextureHints = @(),
-	[string] $BindingsJson
+	[string] $BindingsJson,
+	[ValidateRange(64, 512)][int] $Resolution = 128
 )
 
 $ErrorActionPreference = 'Stop'
@@ -74,7 +75,7 @@ try {
 	$outputDirectory = Split-Path -Parent $outputPath
 	New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 	& $blenderPath --background --factory-startup --python $renderScript -- `
-		--source-fbx $sourcePath --output-png $outputPath --bindings-json $resolvedJson
+		--source-fbx $sourcePath --output-png $outputPath --bindings-json $resolvedJson --resolution $Resolution
 	if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outputPath)) {
 		throw "Blender failed to render '$sourcePath'."
 	}

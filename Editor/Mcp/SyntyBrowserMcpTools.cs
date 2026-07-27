@@ -40,31 +40,6 @@ public static class SyntyBrowserMcpTools
 	[McpTool( "synty_rescan" )]
 	public static object Rescan() => CatalogStatus();
 
-	/// <summary>Opens the Synty Browser and queues one asset's thumbnail using the same workflow as a visible card.</summary>
-	[McpTool( "synty_queue_thumbnail" )]
-	public static object QueueThumbnail( string assetId )
-	{
-		var catalog = RequireCatalog();
-		var source = FindAsset( catalog, assetId )
-			?? throw new FileNotFoundException( $"Synty asset '{assetId}' was not found.", assetId );
-		var window = SyntyBrowserWindow.OpenDock();
-		var queued = window.RequestThumbnail( source );
-		return new
-		{
-			source.CacheId,
-			Queued = queued,
-			PendingCount = window.PendingThumbnailCount
-		};
-	}
-
-	/// <summary>Returns the live count of thumbnail jobs without rescanning the Synty catalog.</summary>
-	[McpTool.ReadOnly( "synty_thumbnail_queue_status" )]
-	public static object ThumbnailQueueStatus()
-	{
-		var window = SyntyBrowserWindow.OpenDock();
-		return new { PendingCount = window.PendingThumbnailCount };
-	}
-
 	[McpTool( "synty_import_asset" )]
 	public static SyntyImportResult ImportAsset( string assetId )
 	{
