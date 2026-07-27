@@ -6,6 +6,7 @@ public sealed record SyntyPreviewMaterialBinding
 {
 	public required string MeshName { get; init; }
 	public required string SlotName { get; init; }
+	public int SlotOrdinal { get; init; }
 	public string TextureHint { get; init; }
 	public bool IsAuthoritative { get; init; }
 }
@@ -18,10 +19,11 @@ public static class SyntyPreviewTextureResolver
 	{
 		ArgumentNullException.ThrowIfNull( source );
 		var authoritative = source.Meshes
-			.SelectMany( mesh => mesh.Materials.Select( slot => new SyntyPreviewMaterialBinding
+			.SelectMany( mesh => mesh.Materials.Select( (slot, slotOrdinal) => new SyntyPreviewMaterialBinding
 			{
 				MeshName = mesh.Name,
 				SlotName = slot.Name,
+				SlotOrdinal = slotOrdinal,
 				TextureHint = slot.TextureHint,
 				IsAuthoritative = true
 			} ) )
@@ -32,10 +34,11 @@ public static class SyntyPreviewTextureResolver
 		return (sourceMaterialNames ?? [])
 			.Where( name => !string.IsNullOrWhiteSpace( name ) )
 			.Distinct( StringComparer.OrdinalIgnoreCase )
-			.Select( name => new SyntyPreviewMaterialBinding
+			.Select( (name, slotOrdinal) => new SyntyPreviewMaterialBinding
 			{
 				MeshName = source.Name,
 				SlotName = name,
+				SlotOrdinal = slotOrdinal,
 				TextureHint = name,
 				IsAuthoritative = false
 			} )

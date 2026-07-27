@@ -71,8 +71,10 @@ public sealed class SyntyPreviewTextureResolverTests
 		Assert.HasCount( 2, bindings );
 		Assert.IsTrue( bindings.All( binding => binding.IsAuthoritative ) );
 		Assert.AreEqual( "Stone", bindings[0].SlotName );
+		Assert.AreEqual( 0, bindings[0].SlotOrdinal );
 		Assert.AreEqual( "Stone_Texture", bindings[0].TextureHint );
 		Assert.AreEqual( "Wood", bindings[1].SlotName );
+		Assert.AreEqual( 1, bindings[1].SlotOrdinal );
 		Assert.AreEqual( "Wood_Texture", bindings[1].TextureHint );
 	}
 }

@@ -1,6 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using Sandbox;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Editor.Tools.SyntyBrowser;
@@ -16,6 +19,8 @@ public sealed class SyntyBrowserWindow : Widget
 	private readonly SyntyScrollArea _scroll;
 	private readonly SyntyAssetGrid _grid;
 	private readonly Dictionary<string, Pixmap> _thumbnailCache = new( StringComparer.OrdinalIgnoreCase );
+	private readonly SyntyThumbnailScheduler _thumbnailScheduler = new( 8 );
+	private readonly SemaphoreSlim _thumbnailProducer = new( 1, 1 );
 	private SyntySourceCatalogResult _catalog;
 	private int _refreshRevision;
 
@@ -143,12 +148,86 @@ public sealed class SyntyBrowserWindow : Widget
 
 	internal bool RequestThumbnail( SyntySourceAsset source )
 	{
-		// Preview generation is intentionally external. The editor only displays a cached
-		// image when one is available and must never compile a model from its paint path.
-		return false;
+		if ( source is null || !source.CanImport )
+			return false;
+
+		var outputPath = SyntyPreviewCache.GetPath( Project.Current.GetRootPath(), source );
+		if ( File.Exists( outputPath ) )
+			return false;
+
+		if ( !_thumbnailScheduler.TryQueue( source.CacheId, _grid.IsVisibleOrNearVisible( source ) ) )
+			return false;
+		_ = GenerateThumbnailAsync( source, outputPath );
+		return true;
 	}
 
-	internal int PendingThumbnailCount => 0;
+	internal int PendingThumbnailCount => _thumbnailScheduler.PendingCount;
+
+	private async Task GenerateThumbnailAsync( SyntySourceAsset source, string outputPath )
+	{
+		var bindingsPath = Path.Combine(
+			Project.Current.GetRootPath(),
+			".sbox",
+			"synty-browser",
+			$"{source.CacheId}-{Guid.NewGuid():N}.json" );
+		await _thumbnailProducer.WaitAsync();
+		try
+		{
+			Directory.CreateDirectory( Path.GetDirectoryName( bindingsPath )! );
+			await File.WriteAllTextAsync(
+				bindingsPath,
+				JsonSerializer.Serialize( SyntyPreviewTextureResolver.Bindings( source ) ) );
+			var scriptPath = Path.Combine(
+				Project.Current.GetRootPath(),
+				"Libraries",
+				"SyntyBrowser",
+				"Tools",
+				"generate-preview.ps1" );
+			if ( !File.Exists( scriptPath ) )
+				throw new FileNotFoundException( "The Synty Browser offline preview producer was not found.", scriptPath );
+
+			var startInfo = new ProcessStartInfo
+			{
+				FileName = "powershell.exe",
+				CreateNoWindow = true,
+				UseShellExecute = false,
+				WindowStyle = ProcessWindowStyle.Hidden
+			};
+			foreach ( var argument in new[]
+			{
+				"-NoProfile",
+				"-NonInteractive",
+				"-ExecutionPolicy", "Bypass",
+				"-File", scriptPath,
+				"-SourceFbx", source.SourceFbxPath,
+				"-PackRoot", source.PackRootPath,
+				"-OutputPng", outputPath,
+				"-BindingsJson", bindingsPath
+			} )
+				startInfo.ArgumentList.Add( argument );
+
+			using var process = Process.Start( startInfo )
+				?? throw new InvalidOperationException( "Could not start the offline preview producer." );
+			await process.WaitForExitAsync();
+			if ( process.ExitCode != 0 || !File.Exists( outputPath ) )
+				throw new InvalidOperationException( $"Offline preview generation failed for {source.Name}." );
+
+			var preview = Pixmap.FromFile( outputPath );
+			if ( preview is not null )
+				_thumbnailCache[source.CacheId] = preview;
+		}
+		catch ( Exception exception )
+		{
+			_status.Text = $"Preview failed for {source.DisplayName ?? source.Name}: {exception.Message}";
+		}
+		finally
+		{
+			_thumbnailProducer.Release();
+			_thumbnailScheduler.Complete( source.CacheId );
+			File.Delete( bindingsPath );
+			_grid.Update();
+		}
+	}
 
 	internal bool IsImported( SyntySourceAsset source ) => AssetSystem.FindByPath( ModelPath( source ) ) is not null;
 
