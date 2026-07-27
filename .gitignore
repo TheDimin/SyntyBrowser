@@ -1,0 +1,20 @@
+.sbox/
+.vs/
+bin/
+obj/
+TestResults/
+*.user
+
+# Developer-local Synty source and generated preview data must never be committed.
+Assets/ThirdParty/Synty/
+PreviewCache/
+previews/
+*.fbx
+*.vmdl
+*.vmat
+*.vtex
+*.png
+*.tga
+*.jpg
+*.jpeg
+

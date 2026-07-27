@@ -1,0 +1,15 @@
+{
+  "Packs": {
+    "your_pack_name": {
+      "DefaultShader": "shaders/complex.shader_c",
+      "Materials": {
+        "CustomMaterialSlot": {
+          "Shader": "shaders/complex.shader_c",
+          "Parameters": {
+            "RoughnessScale": "0.8"
+          }
+        }
+      }
+    }
+  }
+}

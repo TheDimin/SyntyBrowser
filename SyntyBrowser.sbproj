@@ -1,0 +1,9 @@
+{
+  "Title": "Synty Browser",
+  "Type": "library",
+  "Org": "thedimin",
+  "Ident": "synty_browser",
+  "Schema": 1,
+  "HasCode": true
+}
+
