@@ -47,21 +47,22 @@ def make_material(binding):
     )
     material.use_nodes = True
     nodes = material.node_tree.nodes
-    shader = nodes.get("Principled BSDF")
+    nodes.clear()
+    output = nodes.new("ShaderNodeOutputMaterial")
+    emission = nodes.new("ShaderNodeEmission")
+    material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
     texture_path = binding.get("texture_path")
     if texture_path:
         image = bpy.data.images.load(texture_path, check_existing=True)
         texture = nodes.new("ShaderNodeTexImage")
         texture.image = image
         texture.interpolation = "Closest"
-        material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
-        material.node_tree.links.new(texture.outputs["Alpha"], shader.inputs["Alpha"])
+        material.node_tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
     else:
-        shader.inputs["Base Color"].default_value = (0.32, 0.36, 0.42, 1.0)
-    shader.inputs["Roughness"].default_value = 0.8
+        emission.inputs["Color"].default_value = (0.32, 0.36, 0.42, 1.0)
+    emission.inputs["Strength"].default_value = 1.0
     material.surface_render_method = "DITHERED"
     return material
-
 
 def bind_materials(bindings, mesh_objects):
     by_name = {}
@@ -123,15 +124,6 @@ def render(output_path, mesh_objects, resolution, samples):
     camera_data.ortho_scale = max(size.x, size.y, size.z) * 1.35
     bpy.context.scene.camera = camera
 
-    light_data = bpy.data.lights.new("SyntyPreviewKey", "AREA")
-    light_data.energy = 900
-    light_data.shape = "DISK"
-    light_data.size = radius * 2.0
-    light = bpy.data.objects.new("SyntyPreviewKey", light_data)
-    bpy.context.scene.collection.objects.link(light)
-    light.location = center + Vector((-1.5, -2.0, 3.0)).normalized() * radius * 3.0
-    light.rotation_euler = (center - light.location).to_track_quat("-Z", "Y").to_euler()
-
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE_NEXT"
     scene.eevee.taa_render_samples = samples
@@ -149,6 +141,7 @@ def render(output_path, mesh_objects, resolution, samples):
 
 def render_job(source_fbx, output_png, bindings, resolution, samples):
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.outliner.orphans_purge(do_recursive=True)
     bpy.ops.import_scene.fbx(filepath=source_fbx, use_anim=False)
     meshes = [
         obj

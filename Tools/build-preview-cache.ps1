@@ -3,6 +3,9 @@ param(
 	[Parameter(Mandatory = $true)][string] $ProjectRoot,
 	[ValidateRange(64, 256)][int] $Resolution = 96,
 	[ValidateRange(1, 64)][int] $Samples = 8,
+	[ValidateRange(10, 500)][int] $BatchSize = 50,
+	[ValidateRange(4, 128)][int] $MinFreeVirtualGb = 16,
+	[ValidateRange(2, 128)][int] $MinFreePhysicalGb = 8,
 	[string] $Filter = '*',
 	[ValidateRange(0, 1000000)][int] $Limit = 0,
 	[switch] $Force
@@ -152,44 +155,40 @@ if ($jobs.Count -eq 0) {
 $workRoot = Join-Path ([IO.Path]::GetTempPath()) ('synty-preview-cache-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $workRoot | Out-Null
 try {
-	$manifest = Join-Path $workRoot 'manifest.json'
-	$renderSkips = Join-Path $workRoot 'skipped.json'
-	ConvertTo-Json -InputObject @($jobs) -Depth 6 | Set-Content -LiteralPath $manifest -Encoding utf8
 	$renderScript = Join-Path $PSScriptRoot 'render-preview.py'
-	Write-Host "Rendering $($jobs.Count) thumbnail(s) at ${Resolution}x${Resolution}, $Samples samples, in one offline Blender session..."
-	& (Find-Blender) --background --factory-startup --python $renderScript -- `
-		--manifest-json $manifest --skipped-json $renderSkips --resolution $Resolution --samples $Samples
-	if ($LASTEXITCODE -ne 0) {
-		throw "Blender exited with code $LASTEXITCODE."
-	}
-	$newSkips = if (Test-Path -LiteralPath $renderSkips) {
-		@(Get-Content -LiteralPath $renderSkips -Raw | ConvertFrom-Json)
-	} else {
-		@()
-	}
-	if ($newSkips.Count -gt 0) {
-		$existingSkips = if (Test-Path -LiteralPath $skipManifest) {
-			@(Get-Content -LiteralPath $skipManifest -Raw | ConvertFrom-Json)
-		} else {
-			@()
+	$blender = Find-Blender
+	$chunkCount = [Math]::Ceiling($jobs.Count / $BatchSize)
+	Write-Host "Rendering $($jobs.Count) thumbnail(s) at ${Resolution}x${Resolution}, $Samples sample(s), recycling Blender every $BatchSize asset(s)..."
+	for ($offset = 0; $offset -lt $jobs.Count; $offset += $BatchSize) {
+		$memory = Get-CimInstance Win32_OperatingSystem
+		$freeVirtualGb = $memory.FreeVirtualMemory * 1KB / 1GB
+		$freePhysicalGb = $memory.FreePhysicalMemory * 1KB / 1GB
+		if ($freeVirtualGb -lt $MinFreeVirtualGb -or $freePhysicalGb -lt $MinFreePhysicalGb) {
+			throw "Preview generation paused before the next chunk: only $([Math]::Round($freeVirtualGb, 1)) GB virtual and $([Math]::Round($freePhysicalGb, 1)) GB physical memory remain."
 		}
-		$mergedSkips = @($existingSkips) + @($newSkips) |
-			Group-Object output_png |
-			ForEach-Object { $_.Group[-1] }
-		$skipDirectory = Split-Path -Parent $skipManifest
-		New-Item -ItemType Directory -Path $skipDirectory -Force | Out-Null
-		ConvertTo-Json -InputObject @($mergedSkips) -Depth 4 |
-			Set-Content -LiteralPath $skipManifest -Encoding utf8
-		$skipped += $newSkips.Count
-	}
-	$skippedOutputs = @{}
-	foreach ($entry in $newSkips) { $skippedOutputs[$entry.output_png] = $true }
-	$missing = @($jobs | Where-Object {
-		-not (Test-Path -LiteralPath $_.output_png) -and
-		-not $skippedOutputs.ContainsKey($_.output_png)
-	})
-	if ($missing.Count -gt 0) {
-		throw "Blender completed without writing $($missing.Count) expected thumbnail(s)."
+		$last = [Math]::Min($offset + $BatchSize - 1, $jobs.Count - 1)
+		$chunk = @($jobs[$offset..$last])
+		$chunkNumber = [Math]::Floor($offset / $BatchSize) + 1
+		$manifest = Join-Path $workRoot "manifest-$chunkNumber.json"
+		$renderSkips = Join-Path $workRoot "skipped-$chunkNumber.json"
+		ConvertTo-Json -InputObject $chunk -Depth 6 | Set-Content -LiteralPath $manifest -Encoding utf8
+		Write-Host "Starting Blender chunk $chunkNumber/$chunkCount ($($offset + 1)-$($last + 1) of $($jobs.Count))..."
+		& $blender --background --factory-startup --python $renderScript -- `
+			--manifest-json $manifest --skipped-json $renderSkips --resolution $Resolution --samples $Samples
+		if ($LASTEXITCODE -ne 0) { throw "Blender chunk $chunkNumber/$chunkCount exited with code $LASTEXITCODE." }
+		$newSkips = if (Test-Path -LiteralPath $renderSkips) { @(Get-Content -LiteralPath $renderSkips -Raw | ConvertFrom-Json) } else { @() }
+		if ($newSkips.Count -gt 0) {
+			$existingSkips = if (Test-Path -LiteralPath $skipManifest) { @(Get-Content -LiteralPath $skipManifest -Raw | ConvertFrom-Json) } else { @() }
+			$mergedSkips = @($existingSkips) + @($newSkips) | Group-Object output_png | ForEach-Object { $_.Group[-1] }
+			New-Item -ItemType Directory -Path (Split-Path -Parent $skipManifest) -Force | Out-Null
+			ConvertTo-Json -InputObject @($mergedSkips) -Depth 4 | Set-Content -LiteralPath $skipManifest -Encoding utf8
+			$skipped += $newSkips.Count
+		}
+		$skippedOutputs = @{}
+		foreach ($entry in $newSkips) { $skippedOutputs[$entry.output_png] = $true }
+		$missing = @($chunk | Where-Object { -not (Test-Path -LiteralPath $_.output_png) -and -not $skippedOutputs.ContainsKey($_.output_png) })
+		if ($missing.Count -gt 0) { throw "Blender chunk $chunkNumber/$chunkCount completed without writing $($missing.Count) expected thumbnail(s)." }
+		Write-Host "Completed Blender chunk $chunkNumber/$chunkCount; progress is persisted in the preview cache."
 	}
 	Write-Host "Cached $($jobs.Count) thumbnail(s). Skipped $skipped invalid asset(s)."
 } finally {
