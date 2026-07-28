@@ -26,6 +26,13 @@ function Find-Blender {
 
 $sourcePath = (Resolve-Path -LiteralPath $SourceRoot).Path
 $projectPath = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$skipManifest = Join-Path $projectPath '.sbox\synty-browser\preview-skips.json'
+$knownSkipped = @{}
+if (-not $Force -and (Test-Path -LiteralPath $skipManifest)) {
+	foreach ($entry in @(Get-Content -LiteralPath $skipManifest -Raw | ConvertFrom-Json)) {
+		$knownSkipped[$entry.output_png] = $true
+	}
+}
 $materialLists = @(Get-ChildItem -LiteralPath $sourcePath -Recurse -File -Filter 'MaterialList_*.txt')
 if ($materialLists.Count -eq 0) {
 	throw "No MaterialList_*.txt files were found under '$sourcePath'."
@@ -69,6 +76,10 @@ foreach ($materialList in $materialLists) {
 
 		$output = Join-Path $projectPath ".sbox\synty-browser\previews\$packId\$(Normalize-Id $name).png"
 		if (-not $Force -and (Test-Path -LiteralPath $output)) { continue }
+		if (-not $Force -and $knownSkipped.ContainsKey($output)) {
+			$skipped++
+			continue
+		}
 
 		$bindings = [Collections.Generic.List[object]]::new()
 		$meshes = [regex]::Matches(
@@ -142,15 +153,41 @@ $workRoot = Join-Path ([IO.Path]::GetTempPath()) ('synty-preview-cache-' + [Guid
 New-Item -ItemType Directory -Path $workRoot | Out-Null
 try {
 	$manifest = Join-Path $workRoot 'manifest.json'
+	$renderSkips = Join-Path $workRoot 'skipped.json'
 	ConvertTo-Json -InputObject @($jobs) -Depth 6 | Set-Content -LiteralPath $manifest -Encoding utf8
 	$renderScript = Join-Path $PSScriptRoot 'render-preview.py'
 	Write-Host "Rendering $($jobs.Count) thumbnail(s) at ${Resolution}x${Resolution}, $Samples samples, in one offline Blender session..."
 	& (Find-Blender) --background --factory-startup --python $renderScript -- `
-		--manifest-json $manifest --resolution $Resolution --samples $Samples
+		--manifest-json $manifest --skipped-json $renderSkips --resolution $Resolution --samples $Samples
 	if ($LASTEXITCODE -ne 0) {
 		throw "Blender exited with code $LASTEXITCODE."
 	}
-	$missing = @($jobs | Where-Object { -not (Test-Path -LiteralPath $_.output_png) })
+	$newSkips = if (Test-Path -LiteralPath $renderSkips) {
+		@(Get-Content -LiteralPath $renderSkips -Raw | ConvertFrom-Json)
+	} else {
+		@()
+	}
+	if ($newSkips.Count -gt 0) {
+		$existingSkips = if (Test-Path -LiteralPath $skipManifest) {
+			@(Get-Content -LiteralPath $skipManifest -Raw | ConvertFrom-Json)
+		} else {
+			@()
+		}
+		$mergedSkips = @($existingSkips) + @($newSkips) |
+			Group-Object output_png |
+			ForEach-Object { $_.Group[-1] }
+		$skipDirectory = Split-Path -Parent $skipManifest
+		New-Item -ItemType Directory -Path $skipDirectory -Force | Out-Null
+		ConvertTo-Json -InputObject @($mergedSkips) -Depth 4 |
+			Set-Content -LiteralPath $skipManifest -Encoding utf8
+		$skipped += $newSkips.Count
+	}
+	$skippedOutputs = @{}
+	foreach ($entry in $newSkips) { $skippedOutputs[$entry.output_png] = $true }
+	$missing = @($jobs | Where-Object {
+		-not (Test-Path -LiteralPath $_.output_png) -and
+		-not $skippedOutputs.ContainsKey($_.output_png)
+	})
 	if ($missing.Count -gt 0) {
 		throw "Blender completed without writing $($missing.Count) expected thumbnail(s)."
 	}

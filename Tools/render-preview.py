@@ -9,6 +9,10 @@ import bpy
 from mathutils import Vector
 
 
+class UnsupportedPreviewError(RuntimeError):
+    pass
+
+
 def parse_args():
     separator = sys.argv.index("--") if "--" in sys.argv else len(sys.argv)
     parser = argparse.ArgumentParser()
@@ -16,6 +20,7 @@ def parse_args():
     parser.add_argument("--output-png")
     parser.add_argument("--bindings-json")
     parser.add_argument("--manifest-json")
+    parser.add_argument("--skipped-json")
     parser.add_argument("--resolution", type=int, default=128)
     parser.add_argument("--samples", type=int, default=8)
     return parser.parse_args(sys.argv[separator + 1 :])
@@ -83,7 +88,7 @@ def bind_materials(bindings, mesh_objects):
             applied += 1
 
     if bindings and not applied:
-        raise RuntimeError(
+        raise UnsupportedPreviewError(
             "No MaterialList mesh/slot bindings matched the imported FBX: "
             + "; ".join(missing)
         )
@@ -154,7 +159,7 @@ def render_job(source_fbx, output_png, bindings, resolution, samples):
         if obj.type == "MESH" and obj not in meshes:
             obj.hide_render = True
     if not meshes:
-        raise RuntimeError("FBX contains no renderable meshes")
+        raise UnsupportedPreviewError("FBX contains no renderable meshes")
 
     bind_materials(bindings, meshes)
     os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
@@ -171,15 +176,29 @@ def main():
     if args.manifest_json:
         with open(args.manifest_json, "r", encoding="utf-8-sig") as stream:
             jobs = json.load(stream)
+        skipped = []
         for index, job in enumerate(jobs, start=1):
             print(f"Synty preview {index}/{len(jobs)}: {job['source_fbx']}")
-            render_job(
-                job["source_fbx"],
-                job["output_png"],
-                job.get("bindings", []),
-                args.resolution,
-                args.samples,
-            )
+            try:
+                render_job(
+                    job["source_fbx"],
+                    job["output_png"],
+                    job.get("bindings", []),
+                    args.resolution,
+                    args.samples,
+                )
+            except UnsupportedPreviewError as error:
+                skipped.append(
+                    {
+                        "source_fbx": job["source_fbx"],
+                        "output_png": job["output_png"],
+                        "reason": str(error),
+                    }
+                )
+                print(f"Synty preview skipped: {job['source_fbx']}: {error}")
+        if args.skipped_json:
+            with open(args.skipped_json, "w", encoding="utf-8") as stream:
+                json.dump(skipped, stream, indent=2)
         return
 
     if not args.source_fbx or not args.output_png:
