@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--bindings-json")
     parser.add_argument("--manifest-json")
     parser.add_argument("--resolution", type=int, default=128)
+    parser.add_argument("--samples", type=int, default=8)
     return parser.parse_args(sys.argv[separator + 1 :])
 
 
@@ -93,7 +94,7 @@ def scene_bounds(objects):
     return (minimum + maximum) * 0.5, maximum - minimum
 
 
-def render(output_path, mesh_objects, resolution):
+def render(output_path, mesh_objects, resolution, samples):
     center, size = scene_bounds(mesh_objects)
     radius = max(size.length * 0.5, 0.01)
 
@@ -124,18 +125,20 @@ def render(output_path, mesh_objects, resolution):
 
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.eevee.taa_render_samples = samples
     scene.render.resolution_x = resolution
     scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
+    scene.render.image_settings.compression = 15
     scene.render.film_transparent = True
     scene.render.filepath = output_path
     scene.view_settings.look = "AgX - Medium High Contrast"
     bpy.ops.render.render(write_still=True)
 
 
-def render_job(source_fbx, output_png, bindings, resolution):
+def render_job(source_fbx, output_png, bindings, resolution, samples):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.fbx(filepath=source_fbx, use_anim=False)
     meshes = [
@@ -151,13 +154,15 @@ def render_job(source_fbx, output_png, bindings, resolution):
 
     bind_materials(bindings, meshes)
     os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
-    render(output_png, meshes, resolution)
+    render(output_png, meshes, resolution, samples)
 
 
 def main():
     args = parse_args()
     if args.resolution < 64 or args.resolution > 512:
         raise ValueError("Resolution must be between 64 and 512 pixels")
+    if args.samples < 1 or args.samples > 64:
+        raise ValueError("Samples must be between 1 and 64")
 
     if args.manifest_json:
         with open(args.manifest_json, "r", encoding="utf-8-sig") as stream:
@@ -169,6 +174,7 @@ def main():
                 job["output_png"],
                 job.get("bindings", []),
                 args.resolution,
+                args.samples,
             )
         return
 
@@ -178,7 +184,7 @@ def main():
     if args.bindings_json:
         with open(args.bindings_json, "r", encoding="utf-8-sig") as stream:
             bindings = json.load(stream)
-    render_job(args.source_fbx, args.output_png, bindings, args.resolution)
+    render_job(args.source_fbx, args.output_png, bindings, args.resolution, args.samples)
 
 
 if __name__ == "__main__":

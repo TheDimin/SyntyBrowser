@@ -1,7 +1,8 @@
 param(
 	[Parameter(Mandatory = $true)][string] $SourceRoot,
 	[Parameter(Mandatory = $true)][string] $ProjectRoot,
-	[ValidateRange(64, 256)][int] $Resolution = 128,
+	[ValidateRange(64, 256)][int] $Resolution = 96,
+	[ValidateRange(1, 64)][int] $Samples = 8,
 	[string] $Filter = '*',
 	[ValidateRange(0, 1000000)][int] $Limit = 0,
 	[switch] $Force
@@ -118,9 +119,9 @@ try {
 	$manifest = Join-Path $workRoot 'manifest.json'
 	ConvertTo-Json -InputObject @($jobs) -Depth 6 | Set-Content -LiteralPath $manifest -Encoding utf8
 	$renderScript = Join-Path $PSScriptRoot 'render-preview.py'
-	Write-Host "Rendering $($jobs.Count) thumbnail(s) at ${Resolution}x${Resolution} in one offline Blender session..."
+	Write-Host "Rendering $($jobs.Count) thumbnail(s) at ${Resolution}x${Resolution}, $Samples samples, in one offline Blender session..."
 	& (Find-Blender) --background --factory-startup --python $renderScript -- `
-		--manifest-json $manifest --resolution $Resolution
+		--manifest-json $manifest --resolution $Resolution --samples $Samples
 	if ($LASTEXITCODE -ne 0) {
 		throw "Blender exited with code $LASTEXITCODE."
 	}
