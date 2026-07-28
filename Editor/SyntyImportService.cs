@@ -127,9 +127,12 @@ public static class SyntyImportService
 			var shader = mapping?.Shader ?? settings.DefaultShader;
 			if ( slot.UsesCustomShader && mapping is null )
 				throw new InvalidOperationException( $"Custom material '{slot.Name}' needs a saved shader mapping." );
-			var parameters = mapping?.Parameters is null
-				? new Dictionary<string, string>( StringComparer.OrdinalIgnoreCase )
-				: new Dictionary<string, string>( mapping.Parameters, StringComparer.OrdinalIgnoreCase );
+			var parameters = SyntyMaterialImportDefaults.ParametersFor( shader );
+			if ( mapping?.Parameters is not null )
+			{
+				foreach ( var parameter in mapping.Parameters )
+					parameters[parameter.Key] = parameter.Value;
+			}
 
 			string textureAssetPath = null;
 			if ( !string.IsNullOrWhiteSpace( slot.TextureHint ) )
@@ -146,7 +149,11 @@ public static class SyntyImportService
 			}
 
 			var materialPath = Path.Combine( materialDirectory, $"{SyntySourceCatalog.NormalizeId( slot.Name )}.vmat" );
-			var materialDocument = BuildMaterialDocument( shader, textureAssetPath, parameters );
+			var materialDocument = BuildMaterialDocument(
+				shader,
+				textureAssetPath,
+				SyntyMaterialImportDefaults.TextureParametersFor( shader ),
+				parameters );
 			var materialChanged = !File.Exists( materialPath )
 				|| !string.Equals( File.ReadAllText( materialPath ), materialDocument, StringComparison.Ordinal );
 			if ( materialChanged )
@@ -202,7 +209,11 @@ public static class SyntyImportService
 		return SyntyTextureLocator.Find( root, hint );
 	}
 
-	private static string BuildMaterialDocument( string shader, string texture, IReadOnlyDictionary<string, string> parameters )
+	private static string BuildMaterialDocument(
+		string shader,
+		string texture,
+		IReadOnlyList<string> textureParameters,
+		IReadOnlyDictionary<string, string> parameters )
 	{
 		var lines = new List<string>
 		{
@@ -211,7 +222,10 @@ public static class SyntyImportService
 			$"\tshader \"{shader}\""
 		};
 		if ( !string.IsNullOrWhiteSpace( texture ) )
-			lines.Add( $"\tTextureColor \"{texture}\"" );
+		{
+			foreach ( var parameter in textureParameters )
+				lines.Add( $"\t{parameter} \"{texture}\"" );
+		}
 		foreach ( var parameter in parameters ?? new Dictionary<string, string>() )
 			lines.Add( $"\t{parameter.Key} \"{parameter.Value}\"" );
 		lines.Add( "}" );

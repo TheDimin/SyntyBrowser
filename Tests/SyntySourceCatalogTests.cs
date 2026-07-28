@@ -5,6 +5,32 @@ using Editor.Tools.SyntyBrowser;
 public sealed class SyntySourceCatalogTests
 {
 	[TestMethod]
+	public void SyntyMaterialImportDefaults_AppliesConservativeWorldDefaults()
+	{
+		var parameters = SyntyMaterialImportDefaults.ParametersFor( "shaders/synty/synty_world.shader_c" );
+
+		Assert.AreEqual( "1", parameters["F_SYNTY_WORLD_VARIATION_PATTERN"] );
+		Assert.AreEqual( "0.025", parameters["SyntyWorldColorVariation"] );
+		Assert.AreEqual( "0.035", parameters["SyntyWorldMicroColorVariation"] );
+		Assert.IsFalse( parameters.ContainsKey( "F_SYNTY_WORLD_MATERIAL_CONTROL" ) );
+		Assert.IsFalse( parameters.ContainsKey( "F_SYNTY_WORLD_HERO_CONTROL" ) );
+		Assert.IsFalse( parameters.ContainsKey( "SyntyWorldTint" ) );
+	}
+
+	[TestMethod]
+	public void SyntyMaterialImportDefaults_UsesFoliageAtlasInputsWithoutChoosingMaterialType()
+	{
+		CollectionAssert.AreEqual(
+			new[] { "LeafTexture", "TrunkTexture" },
+			SyntyMaterialImportDefaults.TextureParametersFor( "shaders/synty/synty_foliage.shader_c" ) );
+
+		var parameters = SyntyMaterialImportDefaults.ParametersFor( "shaders/synty/synty_foliage.shader_c" );
+		Assert.AreEqual( "1", parameters["SyntyFoliageRooted"] );
+		Assert.IsFalse( parameters.ContainsKey( "F_SYNTY_FOLIAGE_GRASS" ) );
+		Assert.IsFalse( parameters.ContainsKey( "F_SYNTY_FOLIAGE_LEAF_ONLY" ) );
+	}
+
+	[TestMethod]
 	public void MaterialList_ProducesOneAssetPerPrefabAndGroupsLods()
 	{
 		var fbx = Path.Combine( Path.GetTempPath(), "SM_Env_Tree_01.fbx" );
