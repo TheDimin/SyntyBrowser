@@ -280,6 +280,68 @@ public sealed class SyntySourceCatalogTests
 		}
 	}
 
+	[TestMethod]
+	public void FbxMeshTransformInspection_DoesNotCompensateLegacyCentimeterAuthoredMesh()
+	{
+		var path = Path.Combine( Path.GetTempPath(), $"{Guid.NewGuid():N}.fbx" );
+		try
+		{
+			WriteLegacyCentimeterMeshFbx( path );
+
+			Assert.AreEqual(
+				1.0,
+				FbxMeshTransformInspection.ReadImportScaleCompensation( path, ["SM_Bld_Stall_03"] ),
+				0.00001 );
+		}
+		finally
+		{
+			File.Delete( path );
+		}
+	}
+
+	private static void WriteLegacyCentimeterMeshFbx( string path )
+	{
+		using var stream = File.Create( path );
+		using var writer = new BinaryWriter( stream );
+		writer.Write( System.Text.Encoding.ASCII.GetBytes( "Kaydara FBX Binary  \0\u001a\0" ) );
+		writer.Write( 7400 );
+		WriteNode( writer, "Creator", [('S', "FBX SDK/FBX Plugins version 2017.0")], null, false );
+		WriteNode(
+			writer,
+			"Geometry",
+			[('L', 1L), ('S', "Geometry::SM_Bld_Stall_03"), ('S', "Mesh")],
+			() => WriteNode(
+				writer,
+				"Vertices",
+				[('d', new double[] { 0, 0, 0, 354, 0, 0, 0, 300, 0, 0, 0, 298 })],
+				null,
+				false ),
+			false );
+		WriteNode(
+			writer,
+			"Model",
+			[('L', 2L), ('S', "Model::SM_Bld_Stall_03"), ('S', "Mesh")],
+			() => WriteNode(
+				writer,
+				"Properties70",
+				[],
+				() => WriteNode(
+					writer,
+					"P",
+					[('S', "Lcl Scaling"), ('S', "Lcl Scaling"), ('S', ""), ('S', "A"), ('D', 1.0), ('D', 1.0), ('D', 1.0)],
+					null,
+					false ),
+				false ),
+			false );
+		WriteNode(
+			writer,
+			"Connections",
+			[],
+			() => WriteNode( writer, "C", [('S', "OO"), ('L', 1L), ('L', 2L)], null, false ),
+			false );
+		writer.Write( new byte[13] );
+	}
+
 	private static void WriteMeshTransformFbx( string path, double embeddedScale )
 	{
 		using var stream = File.Create( path );
@@ -318,13 +380,25 @@ public sealed class SyntySourceCatalogTests
 		BinaryWriter writer,
 		string name,
 		(char Type, object Value)[] properties,
-		Action writeChildren )
+		Action writeChildren,
+		bool isWide = true )
 	{
 		var header = writer.BaseStream.Position;
-		writer.Write( 0UL );
-		writer.Write( (ulong)properties.Length );
+		if ( isWide )
+		{
+			writer.Write( 0UL );
+			writer.Write( (ulong)properties.Length );
+		}
+		else
+		{
+			writer.Write( 0U );
+			writer.Write( (uint)properties.Length );
+		}
 		var propertyLengthPosition = writer.BaseStream.Position;
-		writer.Write( 0UL );
+		if ( isWide )
+			writer.Write( 0UL );
+		else
+			writer.Write( 0U );
 		var encodedName = System.Text.Encoding.UTF8.GetBytes( name );
 		writer.Write( (byte)encodedName.Length );
 		writer.Write( encodedName );
@@ -340,6 +414,15 @@ public sealed class SyntySourceCatalogTests
 			{
 				writer.Write( (double)property.Value );
 			}
+			else if ( property.Type == 'd' )
+			{
+				var values = (double[])property.Value;
+				writer.Write( (uint)values.Length );
+				writer.Write( 0U );
+				writer.Write( checked((uint)(values.Length * sizeof(double))) );
+				foreach ( var value in values )
+					writer.Write( value );
+			}
 			else
 			{
 				var encoded = System.Text.Encoding.UTF8.GetBytes( (string)property.Value );
@@ -349,12 +432,18 @@ public sealed class SyntySourceCatalogTests
 		}
 		var propertyEnd = writer.BaseStream.Position;
 		writeChildren?.Invoke();
-		writer.Write( new byte[25] );
+		writer.Write( new byte[isWide ? 25 : 13] );
 		var end = writer.BaseStream.Position;
 		writer.BaseStream.Position = header;
-		writer.Write( (ulong)end );
+		if ( isWide )
+			writer.Write( (ulong)end );
+		else
+			writer.Write( checked((uint)end) );
 		writer.BaseStream.Position = propertyLengthPosition;
-		writer.Write( (ulong)(propertyEnd - propertyStart) );
+		if ( isWide )
+			writer.Write( (ulong)(propertyEnd - propertyStart) );
+		else
+			writer.Write( checked((uint)(propertyEnd - propertyStart)) );
 		writer.BaseStream.Position = end;
 	}
 }
