@@ -256,4 +256,105 @@ public sealed class SyntySourceCatalogTests
 			File.Delete( path );
 		}
 	}
+
+	[TestMethod]
+	[DataRow( 0.01, 100.0 )]
+	[DataRow( 1.0, 1.0 )]
+	public void FbxMeshTransformInspection_CompensatesOnlyPirateStyleAuthoritativeMeshScale(
+		double embeddedScale,
+		double expectedCompensation )
+	{
+		var path = Path.Combine( Path.GetTempPath(), $"{Guid.NewGuid():N}.fbx" );
+		try
+		{
+			WriteMeshTransformFbx( path, embeddedScale );
+
+			Assert.AreEqual(
+				expectedCompensation,
+				FbxMeshTransformInspection.ReadImportScaleCompensation( path, ["SM_Bld_Shop_01"] ),
+				0.00001 );
+		}
+		finally
+		{
+			File.Delete( path );
+		}
+	}
+
+	private static void WriteMeshTransformFbx( string path, double embeddedScale )
+	{
+		using var stream = File.Create( path );
+		using var writer = new BinaryWriter( stream );
+		writer.Write( System.Text.Encoding.ASCII.GetBytes( "Kaydara FBX Binary  \0\u001a\0" ) );
+		writer.Write( 7500 );
+		WriteNode(
+			writer,
+			"Model",
+			[
+				('L', (object)2L),
+				('S', "Model::SM_Bld_Shop_01"),
+				('S', "Mesh")
+			],
+			() => WriteNode(
+				writer,
+				"Properties70",
+				[],
+				() => WriteNode(
+					writer,
+					"P",
+					[
+						('S', "Lcl Scaling"),
+						('S', "Lcl Scaling"),
+						('S', ""),
+						('S', "A"),
+						('D', embeddedScale),
+						('D', embeddedScale),
+						('D', embeddedScale)
+					],
+					null ) ) );
+		writer.Write( new byte[25] );
+	}
+
+	private static void WriteNode(
+		BinaryWriter writer,
+		string name,
+		(char Type, object Value)[] properties,
+		Action writeChildren )
+	{
+		var header = writer.BaseStream.Position;
+		writer.Write( 0UL );
+		writer.Write( (ulong)properties.Length );
+		var propertyLengthPosition = writer.BaseStream.Position;
+		writer.Write( 0UL );
+		var encodedName = System.Text.Encoding.UTF8.GetBytes( name );
+		writer.Write( (byte)encodedName.Length );
+		writer.Write( encodedName );
+		var propertyStart = writer.BaseStream.Position;
+		foreach ( var property in properties )
+		{
+			writer.Write( (byte)property.Type );
+			if ( property.Type == 'L' )
+			{
+				writer.Write( (long)property.Value );
+			}
+			else if ( property.Type == 'D' )
+			{
+				writer.Write( (double)property.Value );
+			}
+			else
+			{
+				var encoded = System.Text.Encoding.UTF8.GetBytes( (string)property.Value );
+				writer.Write( (uint)encoded.Length );
+				writer.Write( encoded );
+			}
+		}
+		var propertyEnd = writer.BaseStream.Position;
+		writeChildren?.Invoke();
+		writer.Write( new byte[25] );
+		var end = writer.BaseStream.Position;
+		writer.BaseStream.Position = header;
+		writer.Write( (ulong)end );
+		writer.BaseStream.Position = propertyLengthPosition;
+		writer.Write( (ulong)(propertyEnd - propertyStart) );
+		writer.BaseStream.Position = end;
+	}
 }

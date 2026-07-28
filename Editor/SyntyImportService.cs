@@ -180,12 +180,16 @@ public static class SyntyImportService
 			? Array.Empty<string>()
 			: sourceMaterialReferences;
 		var document = File.ReadAllText( modelAsset.AbsolutePath );
+		var importScale = FbxUnitScaleInspection.ReadImportScale( source.SourceFbxPath )
+			* FbxMeshTransformInspection.ReadImportScaleCompensation(
+				source.SourceFbxPath,
+				source.Meshes.Select( mesh => mesh.Name ) );
 		var configured = SyntyModelDocument.Configure(
 			document,
 			materialsToRemap,
 			materialTargets,
 			addRenderHullCollision: true,
-			importScale: FbxUnitScaleInspection.ReadImportScale( source.SourceFbxPath ) );
+			importScale: importScale );
 		File.WriteAllText( modelAsset.AbsolutePath, configured );
 		AssetSystem.RegisterFile( modelAsset.AbsolutePath );
 		modelAsset.Compile( true );
