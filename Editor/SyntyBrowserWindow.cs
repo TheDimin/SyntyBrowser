@@ -168,7 +168,7 @@ public sealed class SyntyBrowserWindow : Widget
 		if ( !settings.Packs.TryGetValue( packName, out var packSettings )
 			|| string.IsNullOrWhiteSpace( packSettings.DefaultShader ) )
 		{
-			ShowDefaultShaderPicker( source, packName );
+			ShowDefaultShaderPicker( source, packName, $"Choose default shader for {source.PackDisplayName ?? packName}" );
 			return;
 		}
 		var missing = source.Meshes.SelectMany( mesh => mesh.Materials )
@@ -184,14 +184,14 @@ public sealed class SyntyBrowserWindow : Widget
 		_grid.Update();
 	}
 
-	private void ShowDefaultShaderPicker( SyntySourceAsset source, string packName )
+	private void ShowDefaultShaderPicker( SyntySourceAsset source, string packName, string title )
 	{
 		var picker = AssetPicker.Create( this, AssetType.FromType( typeof( Shader ) ), new AssetPicker.PickerOptions
 		{
 			EnableCloud = false,
 			EnableMultiselect = false
 		} );
-		picker.Title = $"Choose default shader for {source.PackDisplayName ?? packName}";
+		picker.Title = title;
 		picker.OnAssetPicked = assets =>
 		{
 			var shaderAsset = assets?.SingleOrDefault();
@@ -213,6 +213,109 @@ public sealed class SyntyBrowserWindow : Widget
 			Import( source );
 		};
 		picker.Show();
+	}
+
+	internal void ShowAssetContextMenu( SyntySourceAsset source, Vector2 screenPosition )
+	{
+		if ( source is null )
+			return;
+
+		var menu = new ContextMenu( this );
+		menu.AddHeading( source.DisplayName ?? source.Name );
+		if ( !IsImported( source ) )
+		{
+			menu.AddOption( "Import Locally", "download", () => Import( source ) ).Enabled = source.CanImport;
+			menu.OpenAt( screenPosition );
+			return;
+		}
+
+		var plan = SyntyRemovalService.Plan( source );
+		var materialPaths = plan.OutputPaths
+			.Where( path => path.EndsWith( ".vmat", StringComparison.OrdinalIgnoreCase ) )
+			.OrderBy( path => path, StringComparer.OrdinalIgnoreCase )
+			.ToArray();
+		if ( materialPaths.Length == 1 )
+		{
+			menu.AddOption( "Edit Imported Material...", "texture", () => OpenImportedMaterial( materialPaths[0] ) );
+		}
+		else
+		{
+			var materials = menu.AddMenu( "Edit Imported Materials", "texture" );
+			foreach ( var path in materialPaths )
+			{
+				var materialPath = path;
+				materials.AddOption(
+					Path.GetFileNameWithoutExtension( materialPath ),
+					"edit",
+					() => OpenImportedMaterial( materialPath ) );
+			}
+			if ( materialPaths.Length == 0 )
+				materials.AddOption( "No generated materials found", null ).Enabled = false;
+		}
+
+		var packName = source.PackName ?? _catalog?.PackName;
+		if ( !string.IsNullOrWhiteSpace( packName ) )
+		{
+			menu.AddOption(
+				"Change Pack Shader and Reimport...",
+				"shader",
+				() => ShowDefaultShaderPicker(
+					source,
+					packName,
+					$"Change shader for {source.PackDisplayName ?? packName} and reimport {source.DisplayName ?? source.Name}" ) );
+		}
+
+		menu.AddSeparator();
+		var removal = menu.AddMenu( "Delete Local Import", "delete" );
+		removal.AddOption( $"{plan.OutputPaths.Length} generated project file(s) only", null ).Enabled = false;
+		removal.AddOption( "External Synty source files are preserved", null ).Enabled = false;
+		if ( plan.References.Length > 0 )
+		{
+			removal.AddSeparator();
+			removal.AddOption(
+				$"Blocked by {plan.References.Length} project reference(s)",
+				"lock",
+				null ).Enabled = false;
+			var references = removal.AddMenu( "Show Blocking References", "account_tree" );
+			foreach ( var reference in plan.References.Take( 20 ) )
+				references.AddOption( reference.ReferencingAssetPath, null ).Enabled = false;
+		}
+		else
+		{
+			removal.AddSeparator();
+			removal.AddOption(
+				"Confirm Delete Local Import",
+				"delete_forever",
+				() => DeleteLocalImport( plan ) );
+		}
+		menu.OpenAt( screenPosition );
+	}
+
+	private void OpenImportedMaterial( string path )
+	{
+		var asset = AssetSystem.FindByPath( path );
+		if ( asset is null )
+		{
+			_status.Text = $"Imported material was not found: {path}";
+			return;
+		}
+
+		asset.OpenInEditor();
+		MainAssetBrowser.Instance?.Local.FocusOnAsset( asset );
+	}
+
+	private void DeleteLocalImport( SyntyRemovalPlan plan )
+	{
+		try
+		{
+			var result = SyntyRemovalService.Remove( plan );
+			_status.Text = $"Deleted local import for {plan.Source.DisplayName ?? plan.Source.Name} ({result.RemovedPaths.Length} files).";
+			_grid.Update();
+		}
+		catch ( Exception exception )
+		{
+			_status.Text = $"Could not delete local import: {exception.Message}";
+		}
 	}
 
 	internal void ImportAndSpawn( SyntySourceAsset source )
@@ -380,6 +483,17 @@ public sealed class SyntyBrowserWindow : Widget
 		{
 			base.OnMouseReleased( e );
 			_dragCandidate = -1;
+		}
+
+		protected override void OnContextMenu( ContextMenuEvent e )
+		{
+			base.OnContextMenu( e );
+			var index = HitTest( e.LocalPosition );
+			if ( index < 0 )
+				return;
+
+			_window.ShowAssetContextMenu( _assets[index], e.ScreenPosition );
+			e.Accepted = true;
 		}
 
 		protected override void OnDragStart()
