@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -12,6 +13,7 @@ public static class FbxMeshTransformInspection
 {
 	private const float PirateStyleScale = 0.01f;
 	private const float PirateStyleCompensation = 100.0f;
+	private const double MeterAuthoredCoordinateLimit = 20.0;
 	private static readonly Regex TextModelRegex = new(
 		"""(?ms)^\s*Model:\s*\d+\s*,\s*"Model::(?<name>[^"]+)"\s*,\s*"Mesh"\s*\{(?<body>.*?)(?=^\s*Model:|\z)""",
 		RegexOptions.Compiled | RegexOptions.CultureInvariant );
@@ -84,6 +86,28 @@ public static class FbxMeshTransformInspection
 		var implicitCentimeterTransform = !string.IsNullOrWhiteSpace( creator )
 			&& !creator.Contains( "Blender", StringComparison.OrdinalIgnoreCase )
 			&& version < 7500;
+		var geometryExtents = Descendants( nodes )
+			.Where( node => node.Name == "Geometry" && node.Properties.Count >= 1 )
+			.Select( node => (
+				Id: Convert.ToInt64( node.Properties[0], CultureInfo.InvariantCulture ),
+				Vertices: node.Children
+					.FirstOrDefault( child => child.Name == "Vertices" )
+					?.Properties.FirstOrDefault() as double[] ) )
+			.Where( mesh => mesh.Vertices is { Length: >= 3 } )
+			.ToDictionary(
+				mesh => mesh.Id,
+				mesh => LargestExtent( mesh.Vertices ) );
+		var rawMeshExtents = Descendants( nodes )
+			.Where( node => node.Name == "C"
+				&& node.Properties.Count >= 3
+				&& modelString( node.Properties[0] ) == "OO" )
+			.Select( node => (
+				GeometryId: Convert.ToInt64( node.Properties[1], CultureInfo.InvariantCulture ),
+				ModelId: Convert.ToInt64( node.Properties[2], CultureInfo.InvariantCulture ) ) )
+			.Where( connection => geometryExtents.ContainsKey( connection.GeometryId ) )
+			.ToDictionary(
+				connection => connection.ModelId,
+				connection => geometryExtents[connection.GeometryId] );
 		var defaultModelScale = Descendants( nodes )
 			.Where( node => node.Name == "ObjectType"
 				&& node.Properties.Count > 0
@@ -96,16 +120,36 @@ public static class FbxMeshTransformInspection
 			&& modelString( node.Properties[2] ) == "Mesh" ) )
 		{
 			var name = modelString( model.Properties[1] );
+			var modelId = Convert.ToInt64( model.Properties[0], CultureInfo.InvariantCulture );
 			var scaling = ReadScaling( Descendants( model.Children ) ) ?? defaultModelScale;
 			if ( string.IsNullOrWhiteSpace( name ) || scaling is null )
 				continue;
-			result[CanonicalName( name )] = implicitCentimeterTransform
+			var canonicalName = CanonicalName( name );
+			var hasUnbakedMeterCoordinates = implicitCentimeterTransform
+				&& rawMeshExtents.TryGetValue( modelId, out var largestExtent )
+				&& largestExtent <= MeterAuthoredCoordinateLimit;
+			result[canonicalName] = hasUnbakedMeterCoordinates
 				? (scaling.Value.X * 0.01, scaling.Value.Y * 0.01, scaling.Value.Z * 0.01)
 				: scaling.Value;
 		}
 		return result;
 
 		static string modelString( object value ) => value as string ?? "";
+
+		static double LargestExtent( double[] vertices )
+		{
+			var minimum = new[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity };
+			var maximum = new[] { double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity };
+			for ( var index = 0; index + 2 < vertices.Length; index += 3 )
+			{
+				for ( var axis = 0; axis < 3; axis++ )
+				{
+					minimum[axis] = Math.Min( minimum[axis], vertices[index + axis] );
+					maximum[axis] = Math.Max( maximum[axis], vertices[index + axis] );
+				}
+			}
+			return Enumerable.Range( 0, 3 ).Max( axis => maximum[axis] - minimum[axis] );
+		}
 
 		static (double X, double Y, double Z)? ReadScaling( IEnumerable<FbxNode> candidates )
 		{
@@ -163,7 +207,8 @@ public static class FbxMeshTransformInspection
 
 	private static object ReadProperty( BinaryReader reader )
 	{
-		return (char)reader.ReadByte() switch
+		var type = (char)reader.ReadByte();
+		return type switch
 		{
 			'Y' => reader.ReadInt16(),
 			'C' => reader.ReadByte() != 0,
@@ -173,16 +218,29 @@ public static class FbxMeshTransformInspection
 			'L' => reader.ReadInt64(),
 			'S' => Encoding.UTF8.GetString( reader.ReadBytes( checked((int)reader.ReadUInt32()) ) ),
 			'R' => reader.ReadBytes( checked((int)reader.ReadUInt32()) ),
-			'f' or 'd' or 'l' or 'i' or 'b' or 'c' => SkipArray( reader ),
-			var type => throw new InvalidDataException( $"Unsupported FBX property type '{type}'." )
+			'f' or 'd' or 'l' or 'i' or 'b' or 'c' => ReadArray( reader, type ),
+			_ => throw new InvalidDataException( $"Unsupported FBX property type '{type}'." )
 		};
 	}
 
-	private static byte[] SkipArray( BinaryReader reader )
+	private static object ReadArray( BinaryReader reader, char type )
 	{
-		_ = reader.ReadUInt32();
-		_ = reader.ReadUInt32();
-		return reader.ReadBytes( checked((int)reader.ReadUInt32()) );
+		var length = checked((int)reader.ReadUInt32());
+		var encoding = reader.ReadUInt32();
+		var payload = reader.ReadBytes( checked((int)reader.ReadUInt32()) );
+		if ( encoding == 1 )
+		{
+			using var input = new MemoryStream( payload, false );
+			using var compressed = new ZLibStream( input, CompressionMode.Decompress );
+			using var output = new MemoryStream();
+			compressed.CopyTo( output );
+			payload = output.ToArray();
+		}
+		if ( type != 'd' )
+			return payload;
+		var values = new double[length];
+		Buffer.BlockCopy( payload, 0, values, 0, checked(length * sizeof(double)) );
+		return values;
 	}
 
 	private static IEnumerable<FbxNode> Descendants( IEnumerable<FbxNode> nodes )
@@ -198,6 +256,7 @@ public static class FbxMeshTransformInspection
 	private static string CanonicalName( string value )
 	{
 		var name = value?.Replace( "Model::", "", StringComparison.Ordinal ) ?? "";
+		name = name.Replace( "Geometry::", "", StringComparison.Ordinal );
 		var terminator = name.IndexOf( '\0' );
 		if ( terminator >= 0 )
 			name = name[..terminator];
