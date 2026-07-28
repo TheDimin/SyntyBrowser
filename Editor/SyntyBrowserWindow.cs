@@ -37,7 +37,7 @@ public sealed class SyntyBrowserWindow : Widget
 		refresh.Clicked += Refresh;
 
 		var searchRow = Layout.AddRow();
-		_search = searchRow.Add( new LineEdit( "" ) { PlaceholderText = "Search Synty assets..." }, 1 );
+		_search = searchRow.Add( new LineEdit( "" ) { PlaceholderText = "Search assets or filter with tag:harbor-city" }, 1 );
 		_search.TextEdited += _ => ApplySearch();
 		_status = Layout.Add( new Label( "Choose a Synty pack folder." )
 		{
@@ -574,7 +574,10 @@ public sealed class SyntyBrowserWindow : Widget
 			Paint.SetPen( Theme.Text );
 			Paint.DrawText( new Rect( card.Left + 9, card.Bottom - 45, card.Width - 18, 22 ), source.DisplayName ?? source.Name, TextFlag.LeftCenter | TextFlag.SingleLine );
 			Paint.SetPen( Theme.TextControl.WithAlpha( 0.62f ) );
-			Paint.DrawText( new Rect( card.Left + 9, card.Bottom - 24, card.Width - 18, 16 ), source.PackDisplayName ?? source.Category ?? "FBX", TextFlag.LeftCenter | TextFlag.SingleLine );
+			var metadata = source.Tags.Length == 0
+				? source.PackDisplayName ?? source.Category ?? "FBX"
+				: $"{source.PackDisplayName ?? source.Category ?? "FBX"} · {string.Join( ", ", source.Tags.Select( tag => tag.DisplayName ) )}";
+			Paint.DrawText( new Rect( card.Left + 9, card.Bottom - 24, card.Width - 18, 16 ), metadata, TextFlag.LeftCenter | TextFlag.SingleLine );
 			if ( !source.CanImport )
 			{
 				Paint.SetPen( Theme.Red );

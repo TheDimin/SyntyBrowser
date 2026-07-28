@@ -29,6 +29,7 @@ public sealed record SyntySourceAsset
 	public string PackDisplayName { get; init; }
 	public string PackRootPath { get; init; }
 	public string CacheId => $"{PackName}_{Id}";
+	public SyntyAssetTag[] Tags { get; init; } = [];
 	public string SourceFbxPath { get; init; }
 	public SyntyMeshEntry[] Meshes { get; init; } = [];
 	public bool IsFallback { get; init; }
@@ -126,7 +127,11 @@ public static partial class SyntySourceCatalog
 			DisplayName = asset.DisplayName ?? SyntyAssetNaming.ToDisplayName( asset.Name ),
 			PackName = packName,
 			PackDisplayName = packDisplayName,
-			PackRootPath = root
+			PackRootPath = root,
+			Tags = SyntyAssetTags.Resolve( asset with
+			{
+				DisplayName = asset.DisplayName ?? SyntyAssetNaming.ToDisplayName( asset.Name )
+			} )
 		} ).ToList();
 
 		return new SyntySourceCatalogResult

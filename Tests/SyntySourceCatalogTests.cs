@@ -157,6 +157,45 @@ public sealed class SyntySourceCatalogTests
 	}
 
 	[TestMethod]
+	public void CuratedTags_AssignHarborCityConservatively()
+	{
+		var dock = Asset( "SM_Bld_Dock_Wood_01", "Buildings" );
+		var market = Asset( "SM_Prop_Market_Stall_01", "Props" );
+		var unrelated = Asset( "SM_Prop_Bed_01", "Props" );
+		var incompatible = Asset( "SM_Prop_Space_Crate_01", "SciFi Props" );
+
+		CollectionAssert.AreEqual( new[] { SyntyAssetTags.HarborCity }, SyntyAssetTags.Resolve( dock ) );
+		CollectionAssert.AreEqual( new[] { SyntyAssetTags.HarborCity }, SyntyAssetTags.Resolve( market ) );
+		Assert.HasCount( 0, SyntyAssetTags.Resolve( unrelated ) );
+		Assert.HasCount( 0, SyntyAssetTags.Resolve( incompatible ) );
+	}
+
+	[TestMethod]
+	public void Search_TagFilterComposesWithFuzzyText()
+	{
+		var dock = Asset( "SM_Bld_Dock_Wood_01", "Buildings" ) with { Tags = [SyntyAssetTags.HarborCity] };
+		var market = Asset( "SM_Prop_Market_Stall_01", "Props" ) with { Tags = [SyntyAssetTags.HarborCity] };
+		var forestCrate = Asset( "SM_Prop_Crate_01", "Forest Props" );
+
+		CollectionAssert.AreEqual(
+			new[] { market, dock },
+			SyntyAssetSearch.Search( [forestCrate, market, dock], "tag:harbor-city" ) );
+		CollectionAssert.AreEqual(
+			new[] { dock },
+			SyntyAssetSearch.Search( [forestCrate, market, dock], "dock tag:harbor-city" ) );
+		Assert.HasCount( 0, SyntyAssetSearch.Search( [forestCrate], "tag:harbor-city" ) );
+	}
+
+	private static SyntySourceAsset Asset( string name, string category ) => new()
+	{
+		Id = SyntySourceCatalog.NormalizeId( name ),
+		Name = name,
+		DisplayName = SyntyAssetNaming.ToDisplayName( name ),
+		Category = category,
+		SourceFbxPath = "missing.fbx"
+	};
+
+	[TestMethod]
 	public void ModelDocument_MapsFbxSlotToAuthoritativeMaterialAndAddsCollision()
 	{
 		const string generated = """

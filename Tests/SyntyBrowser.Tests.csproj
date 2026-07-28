@@ -21,6 +21,7 @@
     <Compile Include="..\Editor\FbxMeshTransformInspection.cs" Link="Library\FbxMeshTransformInspection.cs" />
     <Compile Include="..\Editor\SyntyAssetNaming.cs" Link="Library\SyntyAssetNaming.cs" />
     <Compile Include="..\Editor\SyntyAssetSearch.cs" Link="Library\SyntyAssetSearch.cs" />
+    <Compile Include="..\Editor\SyntyAssetTags.cs" Link="Library\SyntyAssetTags.cs" />
     <Compile Include="..\Editor\SyntyModelDocument.cs" Link="Library\SyntyModelDocument.cs" />
     <Compile Include="..\Editor\SyntyPreviewMaterialCache.cs" Link="Library\SyntyPreviewMaterialCache.cs" />
     <Compile Include="..\Editor\SyntyPreviewTextureResolver.cs" Link="Library\SyntyPreviewTextureResolver.cs" />

@@ -8,6 +8,7 @@ Synty Browser is an s&box editor library for browsing developer-owned Synty sour
 - Uses each pack's `MaterialList_*.txt` as the authoritative mesh/material-slot map.
 - Hides collision helpers, UCX shapes, standalone LOD files, animations, and skinned models from the browser.
 - Keeps large catalogs responsive with asynchronous scanning, search, a virtualized grid, and imported-asset thumbnails.
+- Applies a curated cross-pack asset taxonomy and supports exact browser filters such as `tag:harbor-city`.
 - Reads FBX `UnitScaleFactor` and applies the corresponding s&box import scale.
 - Loads developer-local preview PNGs generated ahead of time by a headless Blender batch; browsing never starts Blender, imports, compiles, or renders a model just to paint a thumbnail.
 - Imports transactionally and restores affected output when registration, material compilation, or model compilation fails.
@@ -66,6 +67,7 @@ using Editor.Tools.SyntyBrowser;
 
 var catalog = SyntyBrowserApi.BuildCatalog( sourceRoot );
 var props = SyntyBrowserApi.Search( catalog, "barrel wood" );
+var harborAssets = SyntyBrowserApi.Search( catalog, "tag:harbor-city" );
 var result = SyntyBrowserApi.Import( catalog, props[0] );
 
 var removal = SyntyBrowserApi.PlanRemoval( props[0] );
@@ -74,6 +76,21 @@ if ( removal.References.Length == 0 )
 ```
 
 Removal plans are snapshots. `RemoveImport` refuses a plan with references unless the caller explicitly opts into forcing removal.
+
+## Curated tags
+
+Tags describe individual source assets, not entire packs. Definitions and conservative matching rules live in
+`Editor/SyntyAssetTags.cs`; catalog construction resolves them onto each `SyntySourceAsset`, so the editor,
+public API, and MCP inspection all see the same metadata. To author a future tag:
+
+1. Add one stable kebab-case ID and human-readable display name.
+2. Add narrow positive asset/category terms and explicit incompatible-theme exclusions.
+3. Return the tag from `Resolve` only when the asset itself satisfies the rule.
+4. Add positive, negative, and `tag:<id>` composition tests.
+
+`Harbor City` currently covers explicitly named harbor structures, vessels and maritime equipment, fishing and
+waterfront cargo, plus market/merchant/tavern/shop pieces suitable for a working harbor district. It does not tag
+all assets in a maritime pack, and obvious science-fiction, aviation, apocalypse, and submarine assets are excluded.
 
 ## MCP
 

@@ -6,11 +6,13 @@ public static class SyntyAssetSearch
 {
 	public static SyntySourceAsset[] Search( IEnumerable<SyntySourceAsset> assets, string query )
 	{
-		var terms = Tokenize( query );
+		var parsed = ParseQuery( query );
+		var terms = parsed.Terms;
 		if ( terms.Length == 0 )
-			return assets.ToArray();
+			return assets.Where( asset => HasTags( asset, parsed.Tags ) ).ToArray();
 
 		return assets
+			.Where( asset => HasTags( asset, parsed.Tags ) )
 			.Select( asset => (Asset: asset, Score: Score( asset, terms )) )
 			.Where( result => result.Score >= 0 )
 			.OrderByDescending( result => result.Score )
@@ -21,7 +23,7 @@ public static class SyntyAssetSearch
 
 	private static int Score( SyntySourceAsset asset, string[] terms )
 	{
-		var searchable = $"{asset.DisplayName} {asset.Name} {asset.Category} {asset.PackDisplayName}".ToLowerInvariant();
+		var searchable = $"{asset.DisplayName} {asset.Name} {asset.Category} {asset.PackDisplayName} {string.Join( ' ', asset.Tags.Select( tag => tag.DisplayName ) )}".ToLowerInvariant();
 		var words = Tokenize( searchable );
 		var total = 0;
 		foreach ( var term in terms )
@@ -55,6 +57,27 @@ public static class SyntyAssetSearch
 
 	private static string[] Tokenize( string value ) =>
 		(value ?? "").ToLowerInvariant().Split( [' ', '_', '-', '/', '\\', '.'], StringSplitOptions.RemoveEmptyEntries );
+
+	private static (string[] Terms, string[] Tags) ParseQuery( string query )
+	{
+		var terms = new List<string>();
+		var tags = new List<string>();
+		foreach ( var token in (query ?? "").Split( ' ', StringSplitOptions.RemoveEmptyEntries ) )
+		{
+			if ( token.StartsWith( "tag:", StringComparison.OrdinalIgnoreCase ) )
+			{
+				var tag = token[4..].Trim();
+				if ( tag.Length > 0 )
+					tags.Add( tag );
+				continue;
+			}
+			terms.AddRange( Tokenize( token ) );
+		}
+		return (terms.ToArray(), tags.ToArray());
+	}
+
+	private static bool HasTags( SyntySourceAsset asset, string[] requested ) =>
+		requested.All( query => asset.Tags.Any( tag => SyntyAssetTags.Matches( tag, query ) ) );
 
 	private static bool IsSubsequence( string needle, string haystack )
 	{
