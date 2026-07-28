@@ -39,7 +39,9 @@ public static class FbxMeshTransformInspection
 			.Select( pair => pair.Value )
 			.ToArray();
 		if ( selected.Length == 0 )
-			throw new InvalidDataException( $"FBX '{fbxPath}' does not contain an authoritative selected mesh." );
+			throw new InvalidDataException(
+				$"FBX '{fbxPath}' does not contain an authoritative selected mesh. "
+				+ $"Available transformed meshes: {string.Join( ", ", scales.Keys.Take( 20 ) )}" );
 
 		return selected.Any( IsPirateStyleScale ) ? PirateStyleCompensation : 1.0f;
 	}
@@ -74,26 +76,57 @@ public static class FbxMeshTransformInspection
 		stream.Position = 27;
 		var nodes = ReadNodes( reader, version, stream.Length );
 		var result = new Dictionary<string, (double, double, double)>( StringComparer.OrdinalIgnoreCase );
+		var creator = Descendants( nodes )
+			.FirstOrDefault( node => node.Name == "Creator" && node.Properties.Count > 0 )
+			?.Properties[0] as string;
+		// Legacy Autodesk FBX files apply their centimeter conversion as an implicit
+		// 0.01 model transform. Blender-authored and 7.5+ files bake that conversion.
+		var implicitCentimeterTransform = !string.IsNullOrWhiteSpace( creator )
+			&& !creator.Contains( "Blender", StringComparison.OrdinalIgnoreCase )
+			&& version < 7500;
+		var defaultModelScale = Descendants( nodes )
+			.Where( node => node.Name == "ObjectType"
+				&& node.Properties.Count > 0
+				&& modelString( node.Properties[0] ) == "Model" )
+			.Select( node => ReadScaling( Descendants( node.Children ) ) )
+			.FirstOrDefault( scale => scale is not null );
 		foreach ( var model in Descendants( nodes ).Where( node =>
 			node.Name == "Model"
 			&& node.Properties.Count >= 3
 			&& modelString( node.Properties[2] ) == "Mesh" ) )
 		{
 			var name = modelString( model.Properties[1] );
-			var scaling = Descendants( model.Children ).FirstOrDefault( node =>
-				node.Name == "P"
-				&& node.Properties.Count >= 7
-				&& modelString( node.Properties[0] ) == "Lcl Scaling" );
+			var scaling = ReadScaling( Descendants( model.Children ) ) ?? defaultModelScale;
 			if ( string.IsNullOrWhiteSpace( name ) || scaling is null )
 				continue;
-			result[name.Replace( "Model::", "", StringComparison.Ordinal )] = (
-				Convert.ToDouble( scaling.Properties[^3], CultureInfo.InvariantCulture ),
-				Convert.ToDouble( scaling.Properties[^2], CultureInfo.InvariantCulture ),
-				Convert.ToDouble( scaling.Properties[^1], CultureInfo.InvariantCulture ) );
+			result[CanonicalName( name )] = implicitCentimeterTransform
+				? (scaling.Value.X * 0.01, scaling.Value.Y * 0.01, scaling.Value.Z * 0.01)
+				: scaling.Value;
 		}
 		return result;
 
 		static string modelString( object value ) => value as string ?? "";
+
+		static (double X, double Y, double Z)? ReadScaling( IEnumerable<FbxNode> candidates )
+		{
+			var properties = candidates.Where( node =>
+				node.Name == "P"
+				&& node.Properties.Count >= 7
+				&& (modelString( node.Properties[0] ) == "Lcl Scaling"
+					|| modelString( node.Properties[0] ) == "GeometricScaling") )
+				.ToArray();
+			if ( properties.Length == 0 )
+				return null;
+			var scale = (X: 1.0, Y: 1.0, Z: 1.0);
+			foreach ( var property in properties )
+			{
+				scale = (
+					scale.X * Convert.ToDouble( property.Properties[^3], CultureInfo.InvariantCulture ),
+					scale.Y * Convert.ToDouble( property.Properties[^2], CultureInfo.InvariantCulture ),
+					scale.Z * Convert.ToDouble( property.Properties[^1], CultureInfo.InvariantCulture ) );
+			}
+			return scale;
+		}
 	}
 
 	private static List<FbxNode> ReadNodes( BinaryReader reader, uint version, long parentEnd )
@@ -165,6 +198,9 @@ public static class FbxMeshTransformInspection
 	private static string CanonicalName( string value )
 	{
 		var name = value?.Replace( "Model::", "", StringComparison.Ordinal ) ?? "";
+		var terminator = name.IndexOf( '\0' );
+		if ( terminator >= 0 )
+			name = name[..terminator];
 		var separator = name.LastIndexOf( '|' );
 		return separator >= 0 ? name[(separator + 1)..] : name;
 	}
