@@ -178,10 +178,11 @@ public static partial class SyntySourceCatalog
 				return;
 
 			var matches = fbxByName.TryGetValue( prefab, out var exact ) ? exact : [];
+			var match = ResolveFbxCandidate( matches );
 			var error = matches.Length switch
 			{
 				0 => $"No FBX named '{prefab}.fbx' was found.",
-				> 1 => $"Multiple FBXs named '{prefab}.fbx' were found.",
+				> 1 when match is null => $"Multiple FBXs named '{prefab}.fbx' were found outside a unique canonical FBX path.",
 				_ => null
 			};
 			if ( error is not null )
@@ -192,7 +193,7 @@ public static partial class SyntySourceCatalog
 				Id = NormalizeId( prefab ),
 				Name = prefab,
 				Category = category,
-				SourceFbxPath = matches.Length == 1 ? matches[0] : null,
+				SourceFbxPath = match,
 				Meshes = meshes.Select( mesh =>
 				{
 					var lod = LodRegex.Match( mesh.Name );
@@ -244,6 +245,15 @@ public static partial class SyntySourceCatalog
 		return assets;
 	}
 
+	public static string ResolveFbxCandidate( IReadOnlyList<string> matches )
+	{
+		if ( matches is null || matches.Count == 0 ) return null;
+		if ( matches.Count == 1 ) return matches[0];
+		var canonical = matches.Where( path => Path.GetDirectoryName( path )
+			?.Split( Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar )
+			.Any( part => string.Equals( part, "FBX", StringComparison.OrdinalIgnoreCase ) ) == true ).ToArray();
+		return canonical.Length == 1 ? canonical[0] : null;
+	}
 	public static string NormalizeId( string value )
 	{
 		var normalized = Regex.Replace( value?.Trim().ToLowerInvariant() ?? "", @"[^a-z0-9]+", "_" ).Trim( '_' );

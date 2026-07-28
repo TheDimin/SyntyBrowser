@@ -95,7 +95,7 @@ public sealed class SyntyBrowserWindow : Widget
 			var catalog = await Task.Run( () => SyntySourceCatalog.Build( root ) );
 			if ( revision != _refreshRevision )
 				return;
-			_catalog = catalog;
+			_catalog = ApplyTagOverrides( catalog );
 			SyntyBrowserSettings.SourceRoot = _catalog.RootPath;
 			ApplySearch();
 			_status.Text = _catalog.IsLibrary
@@ -120,6 +120,41 @@ public sealed class SyntyBrowserWindow : Widget
 			_status.Text = $"Showing {results.Length:N0} of {_catalog.Assets.Length:N0} assets";
 	}
 
+	private static SyntySourceCatalogResult ApplyTagOverrides( SyntySourceCatalogResult catalog )
+	{
+		var overrides = SyntyBrowserSettings.LoadProject().TagOverrides;
+		return catalog with { Assets = catalog.Assets.Select( asset => SyntyAssetTagOverrides.Apply( asset, overrides ) ).ToArray() };
+	}
+
+	private void EditTags( IReadOnlyList<SyntySourceAsset> sources, SyntyAssetTag tag, bool enabled )
+	{
+		var settings = SyntyBrowserSettings.LoadProject();
+		foreach ( var source in sources )
+			settings.TagOverrides[source.CacheId] = SyntyAssetTagOverrides.Set( source, tag, enabled );
+		SyntyBrowserSettings.SaveProject( settings );
+		_catalog = ApplyTagOverrides( _catalog );
+		ApplySearch();
+		_status.Text = $"{(enabled ? "Added" : "Removed")} {tag.DisplayName} for {sources.Count:N0} asset(s).";
+	}
+
+	private async void ImportBatch( IReadOnlyList<SyntySourceAsset> sources )
+	{
+		var pending = sources.Where( source => source.CanImport && !IsImported( source ) ).ToArray();
+		var imported = 0;
+		var failed = 0;
+		foreach ( var source in pending )
+		{
+			_status.Text = $"Batch import {imported + failed + 1:N0}/{pending.Length:N0}: {source.DisplayName ?? source.Name}";
+			await Task.Yield();
+			Import( source );
+			if ( IsImported( source ) ) imported++; else failed++;
+		}
+		_status.Text = $"Batch import complete: {imported:N0} imported, {failed:N0} failed, {sources.Count - pending.Length:N0} skipped.";
+	}
+	internal void SelectionChanged( int count )
+	{
+		if ( count > 0 ) _status.Text = $"{count:N0} asset(s) selected. Right-click for batch actions.";
+	}
 	internal Pixmap GetThumbnail( SyntySourceAsset source )
 	{
 		var asset = AssetSystem.FindByPath( ModelPath( source ) );
@@ -220,8 +255,22 @@ public sealed class SyntyBrowserWindow : Widget
 		if ( source is null )
 			return;
 
+		var sources = _grid.ContextSelection( source );
 		var menu = new ContextMenu( this );
-		menu.AddHeading( source.DisplayName ?? source.Name );
+		menu.AddHeading( sources.Count > 1 ? $"{sources.Count:N0} selected assets" : source.DisplayName ?? source.Name );
+		var tags = menu.AddMenu( "Edit Tags", "label" );
+		foreach ( var tag in SyntyAssetTags.All )
+		{
+			var selectedTag = tag;
+			var allHave = sources.All( asset => asset.Tags.Any( current => string.Equals( current.Id, selectedTag.Id, StringComparison.OrdinalIgnoreCase ) ) );
+			tags.AddOption( allHave ? $"Remove {selectedTag.DisplayName}" : $"Add {selectedTag.DisplayName}", "label", () => EditTags( sources, selectedTag, !allHave ) );
+		}
+		if ( sources.Count > 1 )
+		{
+			menu.AddOption( "Import Selected", "download", () => ImportBatch( sources ) );
+			menu.OpenAt( screenPosition );
+			return;
+		}
 		if ( !IsImported( source ) )
 		{
 			menu.AddOption( "Import Locally", "download", () => Import( source ) ).Enabled = source.CanImport;
@@ -393,6 +442,7 @@ public sealed class SyntyBrowserWindow : Widget
 		private readonly SyntyBrowserWindow _window;
 		private readonly ScrollArea _scroll;
 		private readonly List<SyntySourceAsset> _assets = [];
+		private readonly SyntyAssetSelection _selection = new();
 		private int _hovered = -1;
 		private int _dragCandidate = -1;
 		private int Columns => Math.Max( 1, (int)((Size.x - Gap) / (PreferredCardWidth + Gap)) );
@@ -437,6 +487,7 @@ public sealed class SyntyBrowserWindow : Widget
 		{
 			_assets.Clear();
 			_assets.AddRange( assets ?? [] );
+			_selection.Retain( _assets );
 			_scroll.VerticalScrollbar.Value = 0;
 			UpdateHeight();
 			_hovered = -1;
@@ -476,9 +527,19 @@ public sealed class SyntyBrowserWindow : Widget
 		protected override void OnMousePress( MouseEvent e )
 		{
 			base.OnMousePress( e );
-			_dragCandidate = e.LeftMouseButton ? HitTest( e.LocalPosition ) : -1;
+			var index = HitTest( e.LocalPosition );
+			if ( e.LeftMouseButton && index >= 0 )
+			{
+				_selection.Select(
+					_assets,
+					index,
+					e.KeyboardModifiers.HasFlag( KeyboardModifiers.Ctrl ),
+					e.KeyboardModifiers.HasFlag( KeyboardModifiers.Shift ) );
+				_window.SelectionChanged( _selection.Selected.Count );
+				Update();
+			}
+			_dragCandidate = e.LeftMouseButton ? index : -1;
 		}
-
 		protected override void OnMouseReleased( MouseEvent e )
 		{
 			base.OnMouseReleased( e );
@@ -552,7 +613,9 @@ public sealed class SyntyBrowserWindow : Widget
 		{
 			var card = CardRect( index );
 			var imported = _window.IsImported( source );
-			if ( imported )
+			if ( _selection.Selected.Contains( source.CacheId ) )
+				Paint.SetPen( new Color( 0.30f, 0.62f, 1.0f ), 3f );
+			else if ( imported )
 				Paint.SetPen( new Color( 0.45f, 0.92f, 0.58f ), 3f );
 			else
 				Paint.ClearPen();
@@ -590,6 +653,12 @@ public sealed class SyntyBrowserWindow : Widget
 			}
 		}
 
+		public IReadOnlyList<SyntySourceAsset> ContextSelection( SyntySourceAsset source )
+		{
+			if ( !_selection.Selected.Contains( source.CacheId ) )
+				return [source];
+			return _assets.Where( asset => _selection.Selected.Contains( asset.CacheId ) ).ToArray();
+		}
 		private int HitTest( Vector2 point )
 		{
 			var strideX = CardWidth + Gap;

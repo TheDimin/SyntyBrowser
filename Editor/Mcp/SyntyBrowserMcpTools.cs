@@ -93,7 +93,9 @@ public static class SyntyBrowserMcpTools
 		var root = SyntyBrowserSettings.SourceRoot;
 		if ( string.IsNullOrWhiteSpace( root ) || !Directory.Exists( root ) )
 			throw new DirectoryNotFoundException( "Configure a valid Synty source pack folder first." );
-		return SyntySourceCatalog.Build( root );
+		var catalog = SyntySourceCatalog.Build( root );
+		var overrides = SyntyBrowserSettings.LoadProject().TagOverrides;
+		return catalog with { Assets = catalog.Assets.Select( asset => SyntyAssetTagOverrides.Apply( asset, overrides ) ).ToArray() };
 	}
 
 	private static SyntySourceAsset FindAsset( SyntySourceCatalogResult catalog, string assetId )

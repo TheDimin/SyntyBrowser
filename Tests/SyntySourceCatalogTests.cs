@@ -5,6 +5,48 @@ using Editor.Tools.SyntyBrowser;
 public sealed class SyntySourceCatalogTests
 {
 	[TestMethod]
+	public void MaterialList_PrefersUniqueCanonicalFbxPathOverCollisionHelper()
+	{
+		var render = Path.Combine( "Pack", "FBX", "SM_Bld_House_01.fbx" );
+		var collision = Path.Combine( "Pack", "Collision", "SM_Bld_House_01.fbx" );
+		Assert.AreEqual( render, SyntySourceCatalog.ResolveFbxCandidate( [collision, render] ) );
+		Assert.IsNull( SyntySourceCatalog.ResolveFbxCandidate( [
+			Path.Combine( "Pack", "FBX", "Props", "Crate.fbx" ),
+			Path.Combine( "Pack", "FBX", "Environment", "Crate.fbx" )
+		] ) );
+	}
+
+	[TestMethod]
+	public void TagOverrides_CanAddAndRemoveCuratedTagsWithoutChangingDefaults()
+	{
+		var dock = Asset( "SM_Bld_Dock_01", "Buildings" ) with { PackName = "village", Tags = [SyntyAssetTags.HarborCity] };
+		var crate = Asset( "SM_Prop_Generic_01", "Props" ) with { PackName = "village" };
+		var removed = SyntyAssetTagOverrides.Apply( dock, new Dictionary<string, SyntyAssetTagOverride>
+		{
+			[dock.CacheId] = SyntyAssetTagOverrides.Set( dock, SyntyAssetTags.HarborCity, false )
+		} );
+		var added = SyntyAssetTagOverrides.Apply( crate, new Dictionary<string, SyntyAssetTagOverride>
+		{
+			[crate.CacheId] = SyntyAssetTagOverrides.Set( crate, SyntyAssetTags.HarborCity, true )
+		} );
+		Assert.HasCount( 0, removed.Tags );
+		CollectionAssert.AreEqual( new[] { SyntyAssetTags.HarborCity }, added.Tags );
+		CollectionAssert.AreEqual( new[] { SyntyAssetTags.HarborCity }, dock.Tags );
+	}
+
+	[TestMethod]
+	public void MultiSelection_SupportsToggleAndOrderedRange()
+	{
+		var assets = new[] { Asset( "A", "Props" ), Asset( "B", "Props" ), Asset( "C", "Props" ) };
+		var selection = new SyntyAssetSelection();
+		selection.Select( assets, 0, false, false );
+		selection.Select( assets, 2, false, true );
+		Assert.HasCount( 3, selection.Selected );
+		selection.Select( assets, 1, true, false );
+		Assert.IsFalse( selection.Selected.Contains( assets[1].CacheId ) );
+	}
+
+	[TestMethod]
 	public void SyntyMaterialImportDefaults_AppliesConservativeWorldDefaults()
 	{
 		var parameters = SyntyMaterialImportDefaults.ParametersFor( "shaders/synty/synty_world.shader_c" );

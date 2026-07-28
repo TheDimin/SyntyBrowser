@@ -8,6 +8,7 @@ namespace Editor.Tools.SyntyBrowser;
 public sealed class SyntyBrowserProjectSettings
 {
 	public Dictionary<string, SyntyPackMaterialSettings> Packs { get; set; } = new( StringComparer.OrdinalIgnoreCase );
+	public Dictionary<string, SyntyAssetTagOverride> TagOverrides { get; set; } = new( StringComparer.OrdinalIgnoreCase );
 }
 
 public sealed class SyntyPackMaterialSettings
