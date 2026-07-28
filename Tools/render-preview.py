@@ -43,12 +43,16 @@ def make_material(binding):
     material.use_nodes = True
     nodes = material.node_tree.nodes
     shader = nodes.get("Principled BSDF")
-    image = bpy.data.images.load(binding["texture_path"], check_existing=True)
-    texture = nodes.new("ShaderNodeTexImage")
-    texture.image = image
-    texture.interpolation = "Closest"
-    material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
-    material.node_tree.links.new(texture.outputs["Alpha"], shader.inputs["Alpha"])
+    texture_path = binding.get("texture_path")
+    if texture_path:
+        image = bpy.data.images.load(texture_path, check_existing=True)
+        texture = nodes.new("ShaderNodeTexImage")
+        texture.image = image
+        texture.interpolation = "Closest"
+        material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
+        material.node_tree.links.new(texture.outputs["Alpha"], shader.inputs["Alpha"])
+    else:
+        shader.inputs["Base Color"].default_value = (0.32, 0.36, 0.42, 1.0)
     shader.inputs["Roughness"].default_value = 0.8
     material.surface_render_method = "DITHERED"
     return material

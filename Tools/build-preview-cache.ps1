@@ -37,6 +37,15 @@ foreach ($materialList in $materialLists) {
 	$packRoot = $materialList.Directory.FullName
 	$packId = Normalize-Id $materialList.Directory.Name
 	$packFiles = @(Get-ChildItem -LiteralPath $packRoot -Recurse -File)
+	$filesByName = @{}
+	foreach ($file in $packFiles) {
+		foreach ($key in @($file.Name, $file.BaseName) | Select-Object -Unique) {
+			if (-not $filesByName.ContainsKey($key)) {
+				$filesByName[$key] = [Collections.Generic.List[IO.FileInfo]]::new()
+			}
+			$filesByName[$key].Add($file)
+		}
+	}
 	$fbxByName = @{}
 	foreach ($file in $packFiles | Where-Object Extension -IEq '.fbx') {
 		if (-not $fbxByName.ContainsKey($file.BaseName)) {
@@ -76,13 +85,16 @@ foreach ($materialList in $materialLists) {
 				$value = $slot.Groups['value'].Value.Trim()
 				$detailMatch = [regex]::Match($value, '^(?<name>.*?)\s+\((?<detail>[^()]*)\)$')
 				$slotName = if ($detailMatch.Success) { $detailMatch.Groups['name'].Value.Trim() } else { $value }
-				$hint = if ($detailMatch.Success) { $detailMatch.Groups['detail'].Value.Trim() } else { $null }
-				if ($hint -and $hint -ine 'Uses custom shader') {
+				$detail = if ($detailMatch.Success) { $detailMatch.Groups['detail'].Value.Trim() } else { $null }
+				$hint = if ($detail -ieq 'Uses custom shader') { $slotName } else { $detail }
+				if ($hint -and $hint -ine 'No Albedo Texture') {
 					$hintName = [IO.Path]::GetFileName($hint)
 					$hintBase = [IO.Path]::GetFileNameWithoutExtension($hintName)
-					$matches = @($packFiles | Where-Object {
-						$_.Name -ieq $hintName -or $_.BaseName -ieq $hintBase
-					})
+					$matches = @(
+						@($filesByName[$hintName]) + @($filesByName[$hintBase]) |
+							Where-Object { $_ } |
+							Sort-Object FullName -Unique
+					)
 					if ($matches.Count -eq 1) {
 						$bindings.Add([ordered]@{
 							mesh_name = $meshName
@@ -91,8 +103,21 @@ foreach ($materialList in $materialLists) {
 							texture_path = $matches[0].FullName
 						})
 					} else {
-						Write-Warning "Skipping texture binding '$name/$meshName[$slotOrdinal]': '$hint' matched $($matches.Count) files."
+						Write-Warning "Using a neutral preview material for '$name/$meshName[$slotOrdinal]': '$hint' matched $($matches.Count) files."
+						$bindings.Add([ordered]@{
+							mesh_name = $meshName
+							slot_name = $slotName
+							slot_ordinal = $slotOrdinal
+							texture_path = $null
+						})
 					}
+				} else {
+					$bindings.Add([ordered]@{
+						mesh_name = $meshName
+						slot_name = $slotName
+						slot_ordinal = $slotOrdinal
+						texture_path = $null
+					})
 				}
 				$slotOrdinal++
 			}
