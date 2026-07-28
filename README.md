@@ -37,28 +37,28 @@ Assets/ThirdParty/Synty/<pack>/
   Textures/
 ```
 
-The source-root preference and preview cache remain local under `.sbox/synty-browser/`.
+The source-root preference remains project-local. Preview images are shared across projects and worktrees under `E:\SyntyPacks\Cache` by default.
 
 ## Offline previews
 
-The browser only reads cached PNG files from:
+The browser reads and writes cached PNG files from:
 
 ```text
-.sbox/synty-browser/previews/<pack>/<asset-id>.png
+E:\SyntyPacks\Cache\previews\v1\<pack>\<asset-id>.png
 ```
 
-Build the local cache before browsing:
+Missing visible and near-visible cards are generated automatically by a bounded background worker. To deliberately warm the full cache:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Libraries\SyntyBrowser\Tools\build-preview-cache.ps1 `
-  -SourceRoot E:\SyntyPacks -ProjectRoot . -Resolution 128
+  -SourceRoot E:\SyntyPacks -CacheRoot E:\SyntyPacks\Cache -Resolution 128
 ```
 
-The batch starts Blender once, then renders every missing MaterialList asset. `-Filter SM_Bld_Bridge_*`, `-Limit 10`, and `-Force` support narrow or repeat runs. Cards only perform cheap PNG reads and show a placeholder for missing files; they never start a producer. Newly written PNGs are noticed during normal repainting without importing the asset.
+The browser queues at most 48 previews and renders batches of at most 12 in a hidden Blender process. `-Filter SM_Bld_Bridge_*`, `-Limit 10`, and `-Force` remain available for deliberate bulk runs. Newly written PNGs are noticed during normal repainting without importing the asset.
 
 The producer matches each MaterialList mesh name and material-slot ordinal to the imported Blender mesh slot, preserving the FBX UV layers and independent multi-material assignments. It never binds authoritative textures by FBX material object name. Collision helpers and LOD levels above zero are excluded from renders.
 
-Generated previews are local cache data and are ignored by Git.
+Generated previews are machine-local cache data and are ignored by Git.
 
 ## Public integration surface
 

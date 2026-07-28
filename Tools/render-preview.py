@@ -156,7 +156,13 @@ def render_job(source_fbx, output_png, bindings, resolution, samples):
 
     bind_materials(bindings, meshes)
     os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
-    render(output_png, meshes, resolution, samples)
+    temporary_png = output_png + f".{os.getpid()}.tmp.png"
+    try:
+        render(temporary_png, meshes, resolution, samples)
+        os.replace(temporary_png, output_png)
+    finally:
+        if os.path.exists(temporary_png):
+            os.remove(temporary_png)
 
 
 def main():

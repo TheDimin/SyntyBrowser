@@ -27,9 +27,14 @@
     <Compile Include="..\Editor\SyntyMaterialImportDefaults.cs" Link="Library\SyntyMaterialImportDefaults.cs" />
     <Compile Include="..\Editor\SyntyModelDocument.cs" Link="Library\SyntyModelDocument.cs" />
     <Compile Include="..\Editor\SyntyPreviewMaterialCache.cs" Link="Library\SyntyPreviewMaterialCache.cs" />
+    <Compile Include="..\Editor\SyntyPreviewCache.cs" Link="Library\SyntyPreviewCache.cs" />
+    <Compile Include="..\Editor\SyntyPreviewMigration.cs" Link="Library\SyntyPreviewMigration.cs" />
+    <Compile Include="..\Editor\SyntyPreviewJobState.cs" Link="Library\SyntyPreviewJobState.cs" />
+    <Compile Include="..\Editor\SyntyPreviewStateStore.cs" Link="Library\SyntyPreviewStateStore.cs" />
     <Compile Include="..\Editor\SyntyPreviewTextureResolver.cs" Link="Library\SyntyPreviewTextureResolver.cs" />
     <Compile Include="..\Editor\SyntySourceCatalog.cs" Link="Library\SyntySourceCatalog.cs" />
     <Compile Include="..\Editor\SyntyThumbnailScheduler.cs" Link="Library\SyntyThumbnailScheduler.cs" />
+    <Compile Include="..\Editor\SyntyThumbnailSource.cs" Link="Library\SyntyThumbnailSource.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -17,6 +17,7 @@ public sealed class SyntyBrowserWindow : Widget
 	private readonly SyntyAssetGrid _grid;
 	private readonly Dictionary<string, Pixmap> _thumbnailCache = new( StringComparer.OrdinalIgnoreCase );
 	private SyntySourceCatalogResult _catalog;
+	private SyntyPreviewQueue _previewQueue;
 	private int _refreshRevision;
 
 	public SyntyBrowserWindow() : this( null ) { }
@@ -39,6 +40,10 @@ public sealed class SyntyBrowserWindow : Widget
 		var searchRow = Layout.AddRow();
 		_search = searchRow.Add( new LineEdit( "" ) { PlaceholderText = "Search assets or filter with tag:harbor-city" }, 1 );
 		_search.TextEdited += _ => ApplySearch();
+		var previews = searchRow.Add( new Button( "Generate Visible", "image" ) );
+		previews.Clicked += GenerateVisible;
+		var cache = searchRow.Add( new Button( "Cache Status", "storage" ) );
+		cache.Clicked += ShowCacheStatus;
 		_status = Layout.Add( new Label( "Choose a Synty pack folder." )
 		{
 			WordWrap = true,
@@ -97,6 +102,7 @@ public sealed class SyntyBrowserWindow : Widget
 				return;
 			_catalog = ApplyTagOverrides( catalog );
 			SyntyBrowserSettings.SourceRoot = _catalog.RootPath;
+			EnsurePreviewQueue();
 			ApplySearch();
 			_status.Text = _catalog.IsLibrary
 				? $"{_catalog.PackCount} packs · {_catalog.Assets.Length:N0} assets · {_catalog.Assets.Count( asset => !asset.CanImport ):N0} need review"
@@ -157,23 +163,116 @@ public sealed class SyntyBrowserWindow : Widget
 	}
 	internal Pixmap GetThumbnail( SyntySourceAsset source )
 	{
-		var asset = AssetSystem.FindByPath( ModelPath( source ) );
-		var imported = asset?.GetAssetThumb( false );
-		if ( imported is not null )
-			return imported;
-		if ( _thumbnailCache.TryGetValue( source.CacheId, out var cached ) )
-			return cached;
-		var previewPath = SyntyPreviewCache.GetPath( Project.Current.GetRootPath(), source );
-		if ( File.Exists( previewPath ) )
+		_thumbnailCache.TryGetValue( source.CacheId, out var offlinePreview );
+		if ( offlinePreview is null )
 		{
-			var preview = Pixmap.FromFile( previewPath );
-			if ( preview is not null )
+			var previewPath = SyntyPreviewCache.GetPath( SyntyBrowserSettings.CacheRoot, source );
+			if ( File.Exists( previewPath ) )
 			{
-				_thumbnailCache[source.CacheId] = preview;
-				return preview;
+				offlinePreview = Pixmap.FromFile( previewPath );
+				if ( offlinePreview is not null )
+					_thumbnailCache[source.CacheId] = offlinePreview;
 			}
 		}
-		return null;
+		var asset = AssetSystem.FindByPath( ModelPath( source ) );
+		var importedPreview = asset?.GetAssetThumb( false );
+		return SyntyThumbnailSourcePolicy.Select(
+			offlinePreview is not null,
+			importedPreview is not null ) switch
+		{
+			SyntyThumbnailSource.OfflinePreview => offlinePreview,
+			SyntyThumbnailSource.ImportedAsset => importedPreview,
+			_ => null
+		};
+	}
+
+	internal bool RequestThumbnail( SyntySourceAsset source, bool forceRetry = false )
+	{
+		EnsurePreviewQueue();
+		return _previewQueue?.Queue( source, _grid.IsVisibleOrNearVisible( source ), forceRetry ) ?? false;
+	}
+
+	internal int PendingThumbnailCount => _previewQueue?.PendingCount ?? 0;
+
+	internal SyntyPreviewQueueSnapshot PreviewQueueStatus() =>
+		_previewQueue?.Snapshot() ?? new( 0, false, 0, 0, 0 );
+
+	internal int QueuePreviewAssets( IEnumerable<SyntySourceAsset> sources, bool forceRetry = false )
+	{
+		EnsurePreviewQueue();
+		return _previewQueue?.QueueMany( sources, forceRetry ) ?? 0;
+	}
+
+	internal void QueuePreviewPack( string packName )
+	{
+		EnsurePreviewQueue();
+		var sources = (_catalog?.Assets ?? []).Where( asset =>
+			string.Equals( asset.PackName, packName, StringComparison.OrdinalIgnoreCase ) ).ToArray();
+		_ = QueuePackGradually( sources );
+		_status.Text = $"Warming shared preview cache for {sources.Length:N0} {packName} asset(s).";
+	}
+
+	private async Task QueuePackGradually( IReadOnlyList<SyntySourceAsset> sources )
+	{
+		foreach ( var source in sources )
+		{
+			while ( _previewQueue is not null && _previewQueue.PendingCount >= SyntyPreviewQueue.MaximumPending )
+				await Task.Delay( 500 );
+			_previewQueue?.Queue( source, true );
+		}
+	}
+
+	internal int RetryFailedPreviews()
+	{
+		EnsurePreviewQueue();
+		return _previewQueue?.RetryFailed( _catalog?.Assets ?? [] ) ?? 0;
+	}
+
+	private void EnsurePreviewQueue()
+	{
+		if ( _catalog is null || _previewQueue is not null )
+			return;
+		var projectRoot = Project.Current?.GetRootPath() ?? Directory.GetCurrentDirectory();
+		var worker = Path.Combine( projectRoot, "Libraries", "SyntyBrowser", "Tools", "render-preview-requests.ps1" );
+		if ( !File.Exists( worker ) )
+			worker = Path.Combine( projectRoot, "Tools", "render-preview-requests.ps1" );
+		if ( !File.Exists( worker ) )
+		{
+			_status.Text = $"Preview worker was not found under '{projectRoot}'.";
+			return;
+		}
+		Directory.CreateDirectory( SyntyBrowserSettings.CacheRoot );
+		_previewQueue = new( _catalog.RootPath, SyntyBrowserSettings.CacheRoot, worker );
+		_previewQueue.Changed += PreviewQueueChanged;
+	}
+
+	private async void PreviewQueueChanged()
+	{
+		await GameTask.MainThread();
+		_thumbnailCache.Clear();
+		_grid.Update();
+		var snapshot = PreviewQueueStatus();
+		if ( snapshot.Pending > 0 || snapshot.WorkerRunning )
+			_status.Text = $"Preview worker: {snapshot.Pending:N0} queued · {snapshot.Completed:N0} cached · {snapshot.Failed:N0} failed";
+	}
+
+	private void GenerateVisible()
+	{
+		var queued = QueuePreviewAssets( _grid.VisibleOrNearAssets() );
+		_status.Text = queued > 0 ? $"Queued {queued:N0} visible preview(s)." : "Visible previews are cached or already queued.";
+	}
+
+	private void ShowCacheStatus()
+	{
+		EnsurePreviewQueue();
+		var snapshot = PreviewQueueStatus();
+		_status.Text = $"{snapshot.Completed:N0} cached · {snapshot.Pending:N0} queued · {snapshot.Skipped:N0} skipped · {snapshot.Failed:N0} failed · {SyntyBrowserSettings.CacheRoot}";
+	}
+
+	private void OpenCacheFolder()
+	{
+		Directory.CreateDirectory( SyntyBrowserSettings.CacheRoot );
+		EditorUtility.OpenFolder( SyntyBrowserSettings.CacheRoot );
 	}
 
 	internal bool IsImported( SyntySourceAsset source ) => AssetSystem.FindByPath( ModelPath( source ) ) is not null;
@@ -258,6 +357,17 @@ public sealed class SyntyBrowserWindow : Widget
 		var sources = _grid.ContextSelection( source );
 		var menu = new ContextMenu( this );
 		menu.AddHeading( sources.Count > 1 ? $"{sources.Count:N0} selected assets" : source.DisplayName ?? source.Name );
+		menu.AddOption( sources.Count > 1 ? "Generate Selected Previews" : "Generate Preview", "image",
+			() => QueuePreviewAssets( sources, true ) );
+		menu.AddOption( $"Generate {source.PackDisplayName ?? source.PackName} Pack", "collections",
+			() => QueuePreviewPack( source.PackName ) );
+		menu.AddOption( "Retry Failed Previews", "refresh", () =>
+		{
+			var queued = RetryFailedPreviews();
+			_status.Text = $"Queued {queued:N0} failed preview(s) for retry.";
+		} );
+		menu.AddOption( "Open Shared Cache", "folder_open", OpenCacheFolder );
+		menu.AddSeparator();
 		var tags = menu.AddMenu( "Edit Tags", "label" );
 		foreach ( var tag in SyntyAssetTags.All )
 		{
@@ -503,8 +613,16 @@ public sealed class SyntyBrowserWindow : Widget
 			var viewportTop = Math.Max( 0f, _scroll.ScreenRect.Top - ScreenRect.Top );
 			var viewportBottom = viewportTop + _scroll.Size.y;
 			var card = CardRect( index );
-			return card.Bottom >= viewportTop - CardHeight && card.Top <= viewportBottom + CardHeight;
+			return SyntyPreviewVisibility.IsVisibleOrNear(
+				card.Top,
+				card.Bottom,
+				viewportTop,
+				viewportBottom,
+				CardHeight );
 		}
+
+		public IReadOnlyList<SyntySourceAsset> VisibleOrNearAssets() =>
+			_assets.Where( IsVisibleOrNearVisible ).ToArray();
 
 		private void UpdateHeight()
 		{
@@ -605,6 +723,10 @@ public sealed class SyntyBrowserWindow : Widget
 			var lastRow = Math.Max( firstRow + 1, (int)MathF.Ceiling( (visibleTop + viewportHeight) / rowHeight ) );
 			var firstIndex = firstRow * Columns;
 			var lastIndex = Math.Min( _assets.Count, lastRow * Columns );
+			var queueFirst = Math.Max( 0, (firstRow - 1) * Columns );
+			var queueLast = Math.Min( _assets.Count, (lastRow + 1) * Columns );
+			for ( var index = queueFirst; index < queueLast; index++ )
+				_window.RequestThumbnail( _assets[index] );
 			for ( var index = firstIndex; index < lastIndex; index++ )
 				DrawCard( index, _assets[index] );
 		}
@@ -631,7 +753,7 @@ public sealed class SyntyBrowserWindow : Widget
 			else
 			{
 				Paint.SetPen( Theme.TextControl.WithAlpha( 0.45f ) );
-				Paint.DrawText( preview, "Run offline preview cache", TextFlag.Center );
+				Paint.DrawText( preview, "Generating preview…", TextFlag.Center );
 			}
 
 			Paint.SetPen( Theme.Text );

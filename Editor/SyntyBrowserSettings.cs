@@ -25,6 +25,7 @@ public sealed class SyntyMaterialMapping
 
 public static class SyntyBrowserSettings
 {
+	public const string DefaultCacheRoot = @"E:\SyntyPacks\Cache";
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
 	public static string SourceRoot
@@ -34,6 +35,24 @@ public static class SyntyBrowserSettings
 		{
 			Directory.CreateDirectory( Path.GetDirectoryName( LocalSettingsPath ) );
 			File.WriteAllText( LocalSettingsPath, value?.Trim() ?? "" );
+		}
+	}
+
+	public static string CacheRoot
+	{
+		get
+		{
+			if ( !File.Exists( CacheRootSettingsPath ) )
+				return DefaultCacheRoot;
+			var configured = File.ReadAllText( CacheRootSettingsPath ).Trim();
+			return string.IsNullOrWhiteSpace( configured ) ? DefaultCacheRoot : Path.GetFullPath( configured );
+		}
+		set
+		{
+			Directory.CreateDirectory( Path.GetDirectoryName( CacheRootSettingsPath )! );
+			File.WriteAllText( CacheRootSettingsPath, string.IsNullOrWhiteSpace( value )
+				? DefaultCacheRoot
+				: Path.GetFullPath( value.Trim() ) );
 		}
 	}
 
@@ -71,4 +90,10 @@ public static class SyntyBrowserSettings
 		".sbox",
 		"synty-browser",
 		"source-root.txt" );
+
+	private static string CacheRootSettingsPath => Path.Combine(
+		Project.Current?.GetRootPath() ?? Directory.GetCurrentDirectory(),
+		".sbox",
+		"synty-browser",
+		"cache-root.txt" );
 }

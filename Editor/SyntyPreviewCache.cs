@@ -5,16 +5,22 @@ namespace Editor.Tools.SyntyBrowser;
 
 public static class SyntyPreviewCache
 {
-	public static string GetPath( string projectRoot, SyntySourceAsset source )
+	public const string RendererVersion = "v1";
+
+	public static string GetPath( string cacheRoot, SyntySourceAsset source )
 	{
-		ArgumentException.ThrowIfNullOrWhiteSpace( projectRoot );
+		ArgumentException.ThrowIfNullOrWhiteSpace( cacheRoot );
 		ArgumentNullException.ThrowIfNull( source );
 		return Path.Combine(
-			Path.GetFullPath( projectRoot ),
-			".sbox",
-			"synty-browser",
+			Path.GetFullPath( cacheRoot ),
 			"previews",
+			RendererVersion,
 			SyntySourceCatalog.SanitizeName( source.PackName ?? source.PackDisplayName ?? "pack" ),
 			$"{SyntySourceCatalog.NormalizeId( source.Id )}.png" );
 	}
+
+	public static string StateRoot( string cacheRoot ) => Path.Combine(
+		Path.GetFullPath( cacheRoot ),
+		"state",
+		RendererVersion );
 }

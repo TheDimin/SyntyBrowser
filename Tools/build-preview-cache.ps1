@@ -1,6 +1,6 @@
 param(
 	[Parameter(Mandatory = $true)][string] $SourceRoot,
-	[Parameter(Mandatory = $true)][string] $ProjectRoot,
+	[string] $CacheRoot = 'E:\SyntyPacks\Cache',
 	[ValidateRange(64, 256)][int] $Resolution = 96,
 	[ValidateRange(1, 64)][int] $Samples = 8,
 	[ValidateRange(10, 500)][int] $BatchSize = 50,
@@ -28,8 +28,9 @@ function Find-Blender {
 }
 
 $sourcePath = (Resolve-Path -LiteralPath $SourceRoot).Path
-$projectPath = (Resolve-Path -LiteralPath $ProjectRoot).Path
-$skipManifest = Join-Path $projectPath '.sbox\synty-browser\preview-skips.json'
+$cachePath = [IO.Path]::GetFullPath($CacheRoot)
+New-Item -ItemType Directory -Path $cachePath -Force | Out-Null
+$skipManifest = Join-Path $cachePath 'state\v1\preview-skips.json'
 $knownSkipped = @{}
 if (-not $Force -and (Test-Path -LiteralPath $skipManifest)) {
 	foreach ($entry in @(Get-Content -LiteralPath $skipManifest -Raw | ConvertFrom-Json)) {
@@ -77,7 +78,7 @@ foreach ($materialList in $materialLists) {
 			continue
 		}
 
-		$output = Join-Path $projectPath ".sbox\synty-browser\previews\$packId\$(Normalize-Id $name).png"
+		$output = Join-Path $cachePath "previews\v1\$packId\$(Normalize-Id $name).png"
 		if (-not $Force -and (Test-Path -LiteralPath $output)) { continue }
 		if (-not $Force -and $knownSkipped.ContainsKey($output)) {
 			$skipped++
