@@ -44,7 +44,7 @@ The source-root preference remains project-local. Preview images are shared acro
 The browser reads and writes cached PNG files from:
 
 ```text
-E:\SyntyPacks\Cache\previews\v1\<pack>\<asset-id>.png
+E:\SyntyPacks\Cache\previews\v2\<pack>\<asset-id>.png
 ```
 
 Missing visible and near-visible cards are generated automatically by a bounded background worker. To deliberately warm the full cache:
@@ -54,7 +54,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Libraries\SyntyBrowser
   -SourceRoot E:\SyntyPacks -CacheRoot E:\SyntyPacks\Cache -Resolution 128
 ```
 
-The browser queues at most 48 previews and renders batches of at most 12 in a hidden Blender process. `-Filter SM_Bld_Bridge_*`, `-Limit 10`, and `-Force` remain available for deliberate bulk runs. Newly written PNGs are noticed during normal repainting without importing the asset.
+The browser queues at most 48 previews and renders batches of at most 12 in one hidden Blender worker. The worker stays alive for 30 idle seconds, so browsing does not pay Blender startup cost for every asset. `-Filter SM_Bld_Bridge_*`, `-Limit 10`, and `-Force` remain available for deliberate bulk runs. Newly written PNGs are noticed during normal repainting without importing the asset.
 
 The producer matches each MaterialList mesh name and material-slot ordinal to the imported Blender mesh slot, preserving the FBX UV layers and independent multi-material assignments. It never binds authoritative textures by FBX material object name. Collision helpers and LOD levels above zero are excluded from renders.
 

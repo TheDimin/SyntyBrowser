@@ -7,6 +7,8 @@ public sealed record SyntyPreviewMigrationResult( int Copied, int Existing, int 
 
 public static class SyntyPreviewMigration
 {
+	public const string LegacyArchiveVersion = "legacy-v1";
+
 	public static SyntyPreviewMigrationResult CopyAndVerify( string legacyPreviewRoot, string cacheRoot )
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace( legacyPreviewRoot );
@@ -29,7 +31,7 @@ public static class SyntyPreviewMigration
 				}
 
 				var relative = Path.GetRelativePath( legacyPreviewRoot, source );
-				var destination = Path.Combine( cacheRoot, "previews", SyntyPreviewCache.RendererVersion, relative );
+				var destination = Path.Combine( cacheRoot, "previews", LegacyArchiveVersion, relative );
 				if ( File.Exists( destination ) && HasPngSignature( destination ) )
 				{
 					existing++;

@@ -13,8 +13,14 @@ public sealed class SyntySharedPreviewCacheTests
 		var path = SyntyPreviewCache.GetPath( @"E:\SyntyPacks\Cache", source );
 
 		Assert.AreEqual(
-			Path.GetFullPath( @"E:\SyntyPacks\Cache\previews\v1\fantasy_kingdom\sm_prop_barrel_01.png" ),
+			Path.GetFullPath( @"E:\SyntyPacks\Cache\previews\v2\fantasy_kingdom\sm_prop_barrel_01.png" ),
 			path );
+	}
+
+	[TestMethod]
+	public void LegacyMigrationCannotPopulateActiveRendererCache()
+	{
+		Assert.AreNotEqual( SyntyPreviewCache.RendererVersion, SyntyPreviewMigration.LegacyArchiveVersion );
 	}
 
 	[TestMethod]
@@ -32,7 +38,7 @@ public sealed class SyntySharedPreviewCacheTests
 
 			Assert.AreEqual( 1, result.Copied );
 			Assert.IsTrue( File.Exists( source ) );
-			Assert.IsTrue( File.Exists( Path.Combine( cache, "previews", "v1", "adventure", "barrel.png" ) ) );
+			Assert.IsTrue( File.Exists( Path.Combine( cache, "previews", "legacy-v1", "adventure", "barrel.png" ) ) );
 		}
 		finally
 		{
@@ -50,7 +56,7 @@ public sealed class SyntySharedPreviewCacheTests
 		File.WriteAllText( Path.Combine( legacy, "pack", "invalid.png" ), "not png" );
 		var valid = Path.Combine( legacy, "pack", "valid.png" );
 		File.WriteAllBytes( valid, [137, 80, 78, 71, 13, 10, 26, 10, 1] );
-		var existing = Path.Combine( cache, "previews", "v1", "pack", "valid.png" );
+		var existing = Path.Combine( cache, "previews", "legacy-v1", "pack", "valid.png" );
 		Directory.CreateDirectory( Path.GetDirectoryName( existing )! );
 		File.WriteAllBytes( existing, [137, 80, 78, 71, 13, 10, 26, 10, 9] );
 		try

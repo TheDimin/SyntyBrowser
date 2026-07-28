@@ -72,6 +72,7 @@ def bind_materials(bindings, mesh_objects):
 
     applied = 0
     missing = []
+    assigned = set()
     for binding in bindings:
         objects = by_name.get(canonical_name(binding["mesh_name"]), [])
         ordinal = binding["slot_ordinal"]
@@ -86,6 +87,7 @@ def bind_materials(bindings, mesh_objects):
                 )
                 continue
             obj.material_slots[ordinal].material = make_material(binding)
+            assigned.add((obj.name_full, ordinal))
             applied += 1
 
     if bindings and not applied:
@@ -95,6 +97,21 @@ def bind_materials(bindings, mesh_objects):
         )
     if missing:
         print("Synty preview binding warnings: " + "; ".join(missing))
+
+    neutral = make_material(
+        {
+            "mesh_name": "Neutral",
+            "slot_ordinal": 0,
+            "texture_path": None,
+        }
+    )
+    for obj in mesh_objects:
+        if len(obj.material_slots) == 0:
+            obj.data.materials.append(neutral)
+            continue
+        for ordinal in range(len(obj.material_slots)):
+            if (obj.name_full, ordinal) not in assigned:
+                obj.material_slots[ordinal].material = neutral
 
 
 def scene_bounds(objects):

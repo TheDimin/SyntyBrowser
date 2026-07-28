@@ -5,7 +5,7 @@ namespace Editor.Tools.SyntyBrowser;
 
 public static class SyntyPreviewCache
 {
-	public const string RendererVersion = "v1";
+	public const string RendererVersion = "v2";
 
 	public static string GetPath( string cacheRoot, SyntySourceAsset source )
 	{
