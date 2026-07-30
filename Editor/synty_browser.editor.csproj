@@ -24,22 +24,22 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<Analyzer Include="../../../../sbox-public/game/bin/managed/Sandbox.CodeUpgrader.dll"/> 
-		<Analyzer Include="../../../../sbox-public/game/bin/managed/Sandbox.Generator.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.System.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Engine.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Filesystem.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Reflection.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Mounting.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Microsoft.AspNetCore.Components.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.AppSystem.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Tools.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Compiling.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Microsoft.CodeAnalysis.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Microsoft.CodeAnalysis.CSharp.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Bind.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/Facepunch.ActionGraphs.dll"/> 
-		<Reference Include="../../../../sbox-public/game/bin/managed/SkiaSharp.dll"/> 
+		<Analyzer Include="../../../../sbox-public/game/bin/managed/Sandbox.CodeUpgrader.dll"/>
+		<Analyzer Include="../../../../sbox-public/game/bin/managed/Sandbox.Generator.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.System.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Engine.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Filesystem.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Reflection.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Mounting.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Microsoft.AspNetCore.Components.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.AppSystem.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Tools.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Compiling.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Microsoft.CodeAnalysis.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Microsoft.CodeAnalysis.CSharp.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Sandbox.Bind.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/Facepunch.ActionGraphs.dll"/>
+		<Reference Include="../../../../sbox-public/game/bin/managed/SkiaSharp.dll"/>
 	</ItemGroup>
 
 	<ItemGroup>
