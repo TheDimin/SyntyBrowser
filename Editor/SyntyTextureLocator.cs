@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace Editor.Tools.SyntyBrowser;
 
@@ -29,6 +30,24 @@ internal static class SyntyTextureLocator
 				PackIndexes[packRoot] = index;
 			}
 		}
-		return index.GetValueOrDefault( textureHint );
+		if ( index.TryGetValue( textureHint, out var exact ) )
+			return exact;
+		foreach ( var candidate in CandidateHints( textureHint ) )
+			if ( index.TryGetValue( candidate, out var inferred ) )
+				return inferred;
+		return null;
+	}
+
+	private static IEnumerable<string> CandidateHints( string materialName )
+	{
+		var candidates = new HashSet<string>( StringComparer.OrdinalIgnoreCase );
+		candidates.Add( materialName.Replace( "_Mat_", "_Texture_", StringComparison.OrdinalIgnoreCase ) );
+		var simplified = materialName
+			.Replace( "_Double_", "_", StringComparison.OrdinalIgnoreCase )
+			.Replace( "_Half_", "_", StringComparison.OrdinalIgnoreCase );
+		var numbered = Regex.Match( simplified, "^(?<prefix>.+?)(?<suffix>_\\d+(?:_[A-Za-z])?)$" );
+		if ( numbered.Success )
+			candidates.Add( $"{numbered.Groups["prefix"].Value}_Texture{numbered.Groups["suffix"].Value}" );
+		return candidates;
 	}
 }

@@ -91,13 +91,25 @@ public static partial class SyntySourceCatalog
 		var fbxByName = fbxFiles
 			.GroupBy( path => Path.GetFileNameWithoutExtension( path ), StringComparer.OrdinalIgnoreCase )
 			.ToDictionary( group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase );
-		var listPath = Directory.EnumerateFiles( root, "MaterialList_*.txt", SearchOption.TopDirectoryOnly )
+		var listPaths = Directory.EnumerateFiles( root, "MaterialList_*.txt", SearchOption.AllDirectories )
 			.OrderBy( path => path, StringComparer.OrdinalIgnoreCase )
-			.FirstOrDefault();
+			.ToArray();
 		var warnings = new List<string>();
-		var assets = listPath is null
-			? []
-			: ParseMaterialList( File.ReadAllLines( listPath ), fbxByName, warnings ).ToList();
+		var assets = listPaths
+			.SelectMany( path => ParseMaterialList( File.ReadAllLines( path ), fbxByName, warnings ) )
+			.ToList();
+		var meshMetadataByName = assets
+			.SelectMany( asset => asset.Meshes )
+			.GroupBy( mesh => mesh.Name, StringComparer.OrdinalIgnoreCase )
+			.ToDictionary( group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase );
+		var dominantMaterial = assets
+			.SelectMany( asset => asset.Meshes )
+			.SelectMany( mesh => mesh.Materials )
+			.Where( material => !material.UsesCustomShader )
+			.GroupBy( material => material.Name, StringComparer.OrdinalIgnoreCase )
+			.OrderByDescending( group => group.Count() )
+			.Select( group => group.First() )
+			.FirstOrDefault();
 
 		var claimed = assets
 			.Where( asset => !string.IsNullOrWhiteSpace( asset.SourceFbxPath ) )
@@ -118,6 +130,8 @@ public static partial class SyntySourceCatalog
 				PackDisplayName = packDisplayName,
 				PackRootPath = root,
 				SourceFbxPath = fbx,
+				Meshes = meshMetadataByName.GetValueOrDefault( name )
+					?? (dominantMaterial is null ? [] : [new SyntyMeshEntry { Name = name, Materials = [dominantMaterial] }]),
 				IsFallback = true
 			} );
 		}
@@ -138,7 +152,7 @@ public static partial class SyntySourceCatalog
 		{
 			PackName = packName,
 			RootPath = root,
-			MaterialListPath = listPath,
+			MaterialListPath = listPaths.FirstOrDefault(),
 			Assets = assets
 				.Where( asset => !IsAuxiliaryModel( asset.Name ) )
 				.GroupBy( asset => asset.Id, StringComparer.OrdinalIgnoreCase )

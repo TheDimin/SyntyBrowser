@@ -13,8 +13,10 @@ public sealed record SyntyAssetTag
 /// Curated, source-catalog taxonomy. Add a definition and narrowly scoped rules here
 /// when a new cross-pack browser tag is needed.
 /// </summary>
-public static partial class SyntyAssetTags
+public static class SyntyAssetTags
 {
+	private static readonly Regex TokenSeparatorRegex = new( @"[^a-z0-9]+", RegexOptions.CultureInvariant );
+
 	public static readonly SyntyAssetTag HarborCity = new()
 	{
 		Id = "harbor-city",
@@ -64,13 +66,11 @@ public static partial class SyntyAssetTags
 	}
 
 	private static string[] Tokenize( string value ) =>
-		TokenSeparatorRegex().Split( value?.ToLowerInvariant() ?? "" )
+		TokenSeparatorRegex.Split( value?.ToLowerInvariant() ?? "" )
 			.Where( term => term.Length > 0 )
 			.ToArray();
 
 	private static string Normalize( string value ) =>
 		string.Join( '-', Tokenize( value ) );
 
-	[GeneratedRegex( @"[^a-z0-9]+", RegexOptions.CultureInvariant )]
-	private static partial Regex TokenSeparatorRegex();
 }

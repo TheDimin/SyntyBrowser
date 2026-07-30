@@ -28,7 +28,7 @@ public static class SyntyMaterialImportDefaults
 			};
 		}
 
-		if ( IsShader( shader, "synty_foliage" ) )
+		if ( IsFoliageShader( shader ) )
 		{
 			return new( StringComparer.OrdinalIgnoreCase )
 			{
@@ -43,9 +43,13 @@ public static class SyntyMaterialImportDefaults
 	}
 
 	public static string[] TextureParametersFor( string shader ) =>
-		IsShader( shader, "synty_foliage" )
+		IsFoliageShader( shader )
 			? ["LeafTexture", "TrunkTexture"]
 			: ["TextureColor"];
+
+	private static bool IsFoliageShader( string shader ) =>
+		IsShader( shader, "synty_foliage" )
+		|| IsShader( shader, "valkark_grass" );
 
 	private static bool IsShader( string shader, string name ) =>
 		!string.IsNullOrWhiteSpace( shader )

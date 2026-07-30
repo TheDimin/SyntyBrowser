@@ -10,7 +10,7 @@ Synty Browser is an s&box editor library for browsing developer-owned Synty sour
 - Keeps large catalogs responsive with asynchronous scanning, search, a virtualized grid, and imported-asset thumbnails.
 - Applies a curated cross-pack asset taxonomy and supports exact browser filters such as `tag:harbor-city`.
 - Reads FBX `UnitScaleFactor` and applies the corresponding s&box import scale.
-- Loads developer-local preview PNGs generated ahead of time by a headless Blender batch; browsing never starts Blender, imports, compiles, or renders a model just to paint a thumbnail.
+- Imports visible and near-visible assets through s&box and displays their native asset thumbnails.
 - Imports transactionally and restores affected output when registration, material compilation, or model compilation fails.
 - Plans removal before changing files and reports project assets that reference an imported model or its generated resources.
 - Exposes the same catalog, search, import, validation, and removal-planning workflows through a public API and s&box MCP tools.
@@ -37,28 +37,7 @@ Assets/ThirdParty/Synty/<pack>/
   Textures/
 ```
 
-The source-root preference remains project-local. Preview images are shared across projects and worktrees under `E:\SyntyPacks\Cache` by default.
-
-## Offline previews
-
-The browser reads and writes cached PNG files from:
-
-```text
-E:\SyntyPacks\Cache\previews\v2\<pack>\<asset-id>.png
-```
-
-Missing visible and near-visible cards are generated automatically by a bounded background worker. To deliberately warm the full cache:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Libraries\SyntyBrowser\Tools\build-preview-cache.ps1 `
-  -SourceRoot E:\SyntyPacks -CacheRoot E:\SyntyPacks\Cache -Resolution 128
-```
-
-The browser queues at most 48 previews and renders batches of at most 12 in one hidden Blender worker. The worker stays alive for 30 idle seconds, so browsing does not pay Blender startup cost for every asset. `-Filter SM_Bld_Bridge_*`, `-Limit 10`, and `-Force` remain available for deliberate bulk runs. Newly written PNGs are noticed during normal repainting without importing the asset.
-
-The producer matches each MaterialList mesh name and material-slot ordinal to the imported Blender mesh slot, preserving the FBX UV layers and independent multi-material assignments. It never binds authoritative textures by FBX material object name. Collision helpers and LOD levels above zero are excluded from renders.
-
-Generated previews are machine-local cache data and are ignored by Git.
+The source-root preference remains project-local. As cards enter the visible or one-row-near-visible range, the browser imports eligible assets sequentially and uses the native s&box thumbnail. Packs without a configured shader and assets with unresolved custom-shader mappings are ignored.
 
 ## Public integration surface
 

@@ -19,22 +19,19 @@
     <Compile Include="..\Editor\FbxSourceMaterialInspection.cs" Link="Library\FbxSourceMaterialInspection.cs" />
     <Compile Include="..\Editor\FbxUnitScaleInspection.cs" Link="Library\FbxUnitScaleInspection.cs" />
     <Compile Include="..\Editor\FbxMeshTransformInspection.cs" Link="Library\FbxMeshTransformInspection.cs" />
+    <Compile Include="..\Editor\FbxEmbeddedMediaPathSanitizer.cs" Link="Library\FbxEmbeddedMediaPathSanitizer.cs" />
     <Compile Include="..\Editor\SyntyAssetNaming.cs" Link="Library\SyntyAssetNaming.cs" />
     <Compile Include="..\Editor\SyntyAssetSearch.cs" Link="Library\SyntyAssetSearch.cs" />
     <Compile Include="..\Editor\SyntyAssetTags.cs" Link="Library\SyntyAssetTags.cs" />
     <Compile Include="..\Editor\SyntyAssetTagOverrides.cs" Link="Library\SyntyAssetTagOverrides.cs" />
     <Compile Include="..\Editor\SyntyAssetSelection.cs" Link="Library\SyntyAssetSelection.cs" />
+    <Compile Include="..\Editor\SyntyAutoImportPolicy.cs" Link="Library\SyntyAutoImportPolicy.cs" />
     <Compile Include="..\Editor\SyntyMaterialImportDefaults.cs" Link="Library\SyntyMaterialImportDefaults.cs" />
+    <Compile Include="..\Editor\SyntyMaterialSlotResolver.cs" Link="Library\SyntyMaterialSlotResolver.cs" />
+    <Compile Include="..\Editor\SyntyMassImportManifest.cs" Link="Library\SyntyMassImportManifest.cs" />
     <Compile Include="..\Editor\SyntyModelDocument.cs" Link="Library\SyntyModelDocument.cs" />
-    <Compile Include="..\Editor\SyntyPreviewMaterialCache.cs" Link="Library\SyntyPreviewMaterialCache.cs" />
-    <Compile Include="..\Editor\SyntyPreviewCache.cs" Link="Library\SyntyPreviewCache.cs" />
-    <Compile Include="..\Editor\SyntyPreviewMigration.cs" Link="Library\SyntyPreviewMigration.cs" />
-    <Compile Include="..\Editor\SyntyPreviewJobState.cs" Link="Library\SyntyPreviewJobState.cs" />
-    <Compile Include="..\Editor\SyntyPreviewStateStore.cs" Link="Library\SyntyPreviewStateStore.cs" />
-    <Compile Include="..\Editor\SyntyPreviewTextureResolver.cs" Link="Library\SyntyPreviewTextureResolver.cs" />
     <Compile Include="..\Editor\SyntySourceCatalog.cs" Link="Library\SyntySourceCatalog.cs" />
-    <Compile Include="..\Editor\SyntyThumbnailScheduler.cs" Link="Library\SyntyThumbnailScheduler.cs" />
-    <Compile Include="..\Editor\SyntyThumbnailSource.cs" Link="Library\SyntyThumbnailSource.cs" />
+    <Compile Include="..\Editor\SyntyTextureLocator.cs" Link="Library\SyntyTextureLocator.cs" />
   </ItemGroup>
 
   <ItemGroup>

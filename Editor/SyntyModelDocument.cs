@@ -14,6 +14,95 @@ public static class SyntyModelDocument
 		"(?m)^(?<prefix>[ \\t]*import_scale[ \\t]*=[ \\t]*)[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?",
 		RegexOptions.Compiled | RegexOptions.CultureInvariant );
 
+	public static string Create(
+		string fbxAssetPath,
+		IReadOnlyList<string> sourceMaterialReferences,
+		IReadOnlyList<string> materialTargets,
+		float importScale,
+		bool addRenderHullCollision = true,
+		string fallbackMaterial = null )
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace( fbxAssetPath );
+		ArgumentNullException.ThrowIfNull( sourceMaterialReferences );
+		ArgumentNullException.ThrowIfNull( materialTargets );
+		var template = $$"""
+			<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:modeldoc30:version{8c2d7a91-9c42-4bf0-883a-5a3b1762d4f1} -->
+			{
+				rootNode =
+				{
+					_class = "RootNode"
+					children =
+					[
+						{
+							_class = "MaterialGroupList"
+							children =
+							[
+								{
+									_class = "DefaultMaterialGroup"
+									remaps = []
+									use_global_default = true
+									global_default_material = "{{Escape( string.IsNullOrWhiteSpace( fallbackMaterial ) ? "materials/default.vmat" : fallbackMaterial )}}"
+								},
+							]
+						},
+						{
+							_class = "RenderMeshList"
+							children =
+							[
+								{
+									_class = "RenderMeshFile"
+									filename = "{{Escape( fbxAssetPath )}}"
+									import_translation = [ 0.0, 0.0, 0.0 ]
+									import_rotation = [ 0.0, 0.0, 0.0 ]
+									import_scale = 1.0
+									align_origin_x_type = "None"
+									align_origin_y_type = "None"
+									align_origin_z_type = "None"
+									parent_bone = ""
+									import_filter =
+									{
+										exclude_by_default = false
+										exception_list = []
+									}
+								},
+							]
+						},
+					]
+					model_archetype = ""
+					primary_associated_entity = ""
+					anim_graph_name = ""
+					base_model_name = ""
+				}
+			}
+			""";
+		return Configure( template + Environment.NewLine, sourceMaterialReferences, materialTargets, addRenderHullCollision, importScale );
+	}
+
+	public static string[] AlignMaterialTargets(
+		IReadOnlyList<string> sourceMaterialReferences,
+		IReadOnlyList<string> declaredSlotNames,
+		IReadOnlyList<string> declaredTargets )
+	{
+		ArgumentNullException.ThrowIfNull( sourceMaterialReferences );
+		ArgumentNullException.ThrowIfNull( declaredSlotNames );
+		ArgumentNullException.ThrowIfNull( declaredTargets );
+		if ( declaredSlotNames.Count != declaredTargets.Count )
+			throw new InvalidDataException( "Declared material slot names and targets must have equal counts." );
+		if ( sourceMaterialReferences.Count == 0 || declaredTargets.Count == 0 )
+			return [];
+
+		return sourceMaterialReferences.Select( (reference, index) =>
+		{
+			var normalizedReference = NormalizeMaterialName( reference );
+			for ( var slotIndex = 0; slotIndex < declaredSlotNames.Count; slotIndex++ )
+			{
+				if ( string.Equals( NormalizeMaterialName( declaredSlotNames[slotIndex] ), normalizedReference, StringComparison.OrdinalIgnoreCase ) )
+					return declaredTargets[slotIndex];
+			}
+			return declaredTargets[Math.Min( index, declaredTargets.Count - 1 )];
+		} ).ToArray();
+	}
+
 	public static string Configure(
 		string document,
 		IReadOnlyList<string> sourceMaterialReferences,
@@ -79,4 +168,10 @@ public static class SyntyModelDocument
 			.ToString();
 		return document.Insert( renderMesh.Index, collision );
 	}
+
+	private static string Escape( string value ) =>
+		value.Replace( "\\", "\\\\", StringComparison.Ordinal ).Replace( "\"", "\\\"", StringComparison.Ordinal );
+
+	private static string NormalizeMaterialName( string value ) =>
+		Path.GetFileNameWithoutExtension( value ?? "" ).Replace( " ", "", StringComparison.Ordinal ).Replace( "_", "", StringComparison.Ordinal );
 }

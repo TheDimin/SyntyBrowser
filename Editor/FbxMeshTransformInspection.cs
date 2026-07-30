@@ -20,6 +20,9 @@ public static class FbxMeshTransformInspection
 	private static readonly Regex TextScaleRegex = new(
 		"\"Lcl Scaling\".*?,\\s*(?<x>[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))\\s*,\\s*(?<y>[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))\\s*,\\s*(?<z>[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))",
 		RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline );
+	private static readonly Regex VesselMeshRegex = new(
+		@"(?:^|_)(?:Boat(?:_|$)|Ship(?:_|$)|Shipwreck(?:_|$)|ShipWheel(?:_|$))",
+		RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant );
 
 	public static float ReadImportScaleCompensation( string fbxPath, IEnumerable<string> authoritativeMeshNames )
 	{
@@ -29,15 +32,14 @@ public static class FbxMeshTransformInspection
 			.Where( name => !string.IsNullOrWhiteSpace( name ) )
 			.Select( CanonicalName )
 			.ToHashSet( StringComparer.OrdinalIgnoreCase );
-		if ( authoritative.Count == 0 )
-			return 1.0f;
 
 		var bytes = File.ReadAllBytes( fbxPath );
 		var scales = bytes.AsSpan().StartsWith( "Kaydara FBX Binary"u8 )
 			? ReadBinaryMeshScales( bytes )
 			: ReadTextMeshScales( bytes );
 		var selected = scales
-			.Where( pair => authoritative.Contains( CanonicalName( pair.Key ) ) )
+			.Where( pair => authoritative.Count == 0
+				|| authoritative.Contains( CanonicalName( pair.Key ) ) )
 			.Select( pair => pair.Value )
 			.ToArray();
 		if ( selected.Length == 0 )
@@ -127,7 +129,8 @@ public static class FbxMeshTransformInspection
 			var canonicalName = CanonicalName( name );
 			var hasUnbakedMeterCoordinates = implicitCentimeterTransform
 				&& rawMeshExtents.TryGetValue( modelId, out var largestExtent )
-				&& largestExtent <= MeterAuthoredCoordinateLimit;
+				&& (largestExtent <= MeterAuthoredCoordinateLimit
+					|| VesselMeshRegex.IsMatch( canonicalName ));
 			result[canonicalName] = hasUnbakedMeterCoordinates
 				? (scaling.Value.X * 0.01, scaling.Value.Y * 0.01, scaling.Value.Z * 0.01)
 				: scaling.Value;

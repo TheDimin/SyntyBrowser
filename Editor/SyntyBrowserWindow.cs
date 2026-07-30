@@ -1,29 +1,61 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using Sandbox;
+using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Editor.Tools.SyntyBrowser;
 
+public sealed record SyntyMassImportStatus
+{
+	public string Stage { get; init; } = "Idle";
+	public string Current { get; init; }
+	public int Total { get; init; }
+	public int Prepared { get; init; }
+	public int Promoted { get; init; }
+	public int Compiled { get; init; }
+	public int Finalized { get; init; }
+	public int Failed { get; init; }
+	public double PreparationRate { get; init; }
+	public DateTime StartedUtc { get; init; }
+	public TimeSpan Elapsed { get; init; }
+	public bool StopRequested { get; init; }
+	public string LastError { get; init; }
+}
 
 [Dock( "Editor", "Synty Browser", "view_in_ar" )]
 public sealed class SyntyBrowserWindow : Widget
 {
+	private const int PreparationBatchSize = 1000;
+	private const int PromotionBatchSize = 48;
 	private const string DockTitle = "Synty Browser";
+	private static SyntyBrowserWindow _instance;
 	private readonly LineEdit _sourceRoot;
 	private readonly LineEdit _search;
 	private readonly Label _status;
 	private readonly SyntyScrollArea _scroll;
 	private readonly SyntyAssetGrid _grid;
-	private readonly Dictionary<string, Pixmap> _thumbnailCache = new( StringComparer.OrdinalIgnoreCase );
+	private readonly Queue<SyntySourceAsset> _automaticImports = new();
+	private readonly HashSet<string> _automaticImportAttempts = new( StringComparer.OrdinalIgnoreCase );
 	private SyntySourceCatalogResult _catalog;
-	private SyntyPreviewQueue _previewQueue;
 	private int _refreshRevision;
+	private bool _destroyed;
+	private bool _automaticImportRunning;
+	private bool _stopRequested;
+	private bool _hasCurrentToolbar;
+	private CancellationTokenSource _massImportCancellation;
+	private SyntyMassImportStatus _massStatus = new();
+	private Button _stopButton;
+
+	public static SyntyMassImportStatus CurrentImportStatus => _instance?._massStatus ?? new();
 
 	public SyntyBrowserWindow() : this( null ) { }
 
 	public SyntyBrowserWindow( Widget parent ) : base( parent )
 	{
+		_instance = this;
 		WindowTitle = DockTitle;
 		MinimumSize = new Vector2( 480, 420 );
 		Layout = Layout.Column();
@@ -39,11 +71,12 @@ public sealed class SyntyBrowserWindow : Widget
 
 		var searchRow = Layout.AddRow();
 		_search = searchRow.Add( new LineEdit( "" ) { PlaceholderText = "Search assets or filter with tag:harbor-city" }, 1 );
-		_search.TextEdited += _ => ApplySearch();
-		var previews = searchRow.Add( new Button( "Generate Visible", "image" ) );
-		previews.Clicked += GenerateVisible;
-		var cache = searchRow.Add( new Button( "Cache Status", "storage" ) );
-		cache.Clicked += ShowCacheStatus;
+		_search.TextEdited += SearchTextEdited;
+		var importAll = searchRow.Add( new Button( "Import All", "download" ) );
+		importAll.Clicked += ImportAll;
+		_stopButton = searchRow.Add( new Button( "Stop", "stop" ) { Enabled = false } );
+		_stopButton.Clicked += StopImport;
+		_hasCurrentToolbar = true;
 		_status = Layout.Add( new Label( "Choose a Synty pack folder." )
 		{
 			WordWrap = true,
@@ -53,11 +86,7 @@ public sealed class SyntyBrowserWindow : Widget
 		_scroll = Layout.Add( new SyntyScrollArea(), 1 );
 		_grid = new SyntyAssetGrid( this, _scroll );
 		_scroll.Canvas = _grid;
-		_scroll.ViewportChanged = () =>
-		{
-			_grid.SetViewportWidth( _scroll.Size.x );
-			_grid.Update();
-		};
+		_scroll.ViewportChanged = ViewportChanged;
 		if ( Directory.Exists( SyntyBrowserSettings.SourceRoot ) )
 			Refresh();
 	}
@@ -65,12 +94,84 @@ public sealed class SyntyBrowserWindow : Widget
 	protected override void OnResize()
 	{
 		base.OnResize();
-		if ( _grid is not null && _scroll is not null )
+		if ( !_destroyed && _grid is not null && _scroll is not null )
 			_grid.SetViewportWidth( _scroll.Size.x );
+	}
+
+	public override void OnDestroyed()
+	{
+		_destroyed = true;
+		_refreshRevision++;
+		_scroll.ViewportChanged = null;
+		_automaticImports.Clear();
+		_massImportCancellation?.Cancel();
+		if ( ReferenceEquals( _instance, this ) )
+			_instance = null;
+		base.OnDestroyed();
+	}
+
+	private void SearchTextEdited( string _ )
+	{
+		ApplySearch();
+	}
+
+	private void ViewportChanged()
+	{
+		if ( _destroyed )
+			return;
+		_grid.SetViewportWidth( _scroll.Size.x );
+		_grid.Update();
+	}
+
+	private void ImportAll()
+	{
+		if ( _catalog is null || _massImportCancellation is not null )
+			return;
+		_ = RunMassImport( int.MaxValue );
+	}
+
+	public static SyntyMassImportStatus StartImportBenchmark( int assetCount )
+	{
+		if ( assetCount <= 0 )
+			throw new ArgumentOutOfRangeException( nameof(assetCount) );
+		var window = OpenDock();
+		if ( window._catalog is null )
+		{
+			var root = SyntyBrowserSettings.SourceRoot;
+			if ( string.IsNullOrWhiteSpace( root ) || !Directory.Exists( root ) )
+				throw new InvalidOperationException( "Configure a valid Synty source folder first." );
+			window._catalog = ApplyTagOverrides( SyntySourceCatalog.Build( root ) );
+			window.ApplySearch();
+		}
+		if ( window._massImportCancellation is not null )
+			throw new InvalidOperationException( "A Synty mass import is already running." );
+		_ = window.RunMassImport( assetCount );
+		return window._massStatus;
+	}
+
+	public static SyntyMassImportStatus StopCurrentImport()
+	{
+		_instance?.StopImport();
+		return CurrentImportStatus;
+	}
+
+	private void StopImport()
+	{
+		_stopRequested = true;
+		_massStatus = _massStatus with { StopRequested = true, Stage = "Stopping after current operation" };
+		_massImportCancellation?.Cancel();
+		_automaticImports.Clear();
+		_status.Text = FormatMassStatus();
 	}
 
 	public static SyntyBrowserWindow OpenDock()
 	{
+		var existing = EditorWindow.DockManager.FindDockWidget( DockTitle )?.Widget as SyntyBrowserWindow;
+		if ( existing.IsValid() && !existing._hasCurrentToolbar )
+		{
+			existing.Destroy();
+			EditorWindow.DockManager.SetDockState( DockTitle, false );
+		}
 		EditorWindow.DockManager.SetDockState( DockTitle, true );
 		var dock = EditorWindow.DockManager.FindDockWidget( DockTitle )?.Widget as SyntyBrowserWindow;
 		if ( !dock.IsValid() )
@@ -98,11 +199,10 @@ public sealed class SyntyBrowserWindow : Widget
 		try
 		{
 			var catalog = await Task.Run( () => SyntySourceCatalog.Build( root ) );
-			if ( revision != _refreshRevision )
+			if ( _destroyed || revision != _refreshRevision )
 				return;
 			_catalog = ApplyTagOverrides( catalog );
 			SyntyBrowserSettings.SourceRoot = _catalog.RootPath;
-			EnsurePreviewQueue();
 			ApplySearch();
 			_status.Text = _catalog.IsLibrary
 				? $"{_catalog.PackCount} packs · {_catalog.Assets.Length:N0} assets · {_catalog.Assets.Count( asset => !asset.CanImport ):N0} need review"
@@ -110,7 +210,7 @@ public sealed class SyntyBrowserWindow : Widget
 		}
 		catch ( Exception exception )
 		{
-			if ( revision != _refreshRevision )
+			if ( _destroyed || revision != _refreshRevision )
 				return;
 			_catalog = null;
 			_grid.SetAssets( [] );
@@ -150,11 +250,17 @@ public sealed class SyntyBrowserWindow : Widget
 		var failed = 0;
 		foreach ( var source in pending )
 		{
+			if ( _destroyed )
+				return;
 			_status.Text = $"Batch import {imported + failed + 1:N0}/{pending.Length:N0}: {source.DisplayName ?? source.Name}";
 			await Task.Yield();
+			if ( _destroyed )
+				return;
 			Import( source );
 			if ( IsImported( source ) ) imported++; else failed++;
 		}
+		if ( _destroyed )
+			return;
 		_status.Text = $"Batch import complete: {imported:N0} imported, {failed:N0} failed, {sources.Count - pending.Length:N0} skipped.";
 	}
 	internal void SelectionChanged( int count )
@@ -163,116 +269,274 @@ public sealed class SyntyBrowserWindow : Widget
 	}
 	internal Pixmap GetThumbnail( SyntySourceAsset source )
 	{
-		_thumbnailCache.TryGetValue( source.CacheId, out var offlinePreview );
-		if ( offlinePreview is null )
-		{
-			var previewPath = SyntyPreviewCache.GetPath( SyntyBrowserSettings.CacheRoot, source );
-			if ( File.Exists( previewPath ) )
-			{
-				offlinePreview = Pixmap.FromFile( previewPath );
-				if ( offlinePreview is not null )
-					_thumbnailCache[source.CacheId] = offlinePreview;
-			}
-		}
-		var asset = AssetSystem.FindByPath( ModelPath( source ) );
-		var importedPreview = asset?.GetAssetThumb( false );
-		return SyntyThumbnailSourcePolicy.Select(
-			offlinePreview is not null,
-			importedPreview is not null ) switch
-		{
-			SyntyThumbnailSource.OfflinePreview => offlinePreview,
-			SyntyThumbnailSource.ImportedAsset => importedPreview,
-			_ => null
-		};
+		return AssetSystem.FindByPath( ModelPath( source ) )?.GetAssetThumb( false );
 	}
 
-	internal bool RequestThumbnail( SyntySourceAsset source, bool forceRetry = false )
+	internal void QueueAutomaticImports( IEnumerable<SyntySourceAsset> sources )
 	{
-		EnsurePreviewQueue();
-		return _previewQueue?.Queue( source, _grid.IsVisibleOrNearVisible( source ), forceRetry ) ?? false;
-	}
-
-	internal int PendingThumbnailCount => _previewQueue?.PendingCount ?? 0;
-
-	internal SyntyPreviewQueueSnapshot PreviewQueueStatus() =>
-		_previewQueue?.Snapshot() ?? new( 0, false, 0, 0, 0 );
-
-	internal int QueuePreviewAssets( IEnumerable<SyntySourceAsset> sources, bool forceRetry = false )
-	{
-		EnsurePreviewQueue();
-		return _previewQueue?.QueueMany( sources, forceRetry ) ?? 0;
-	}
-
-	internal void QueuePreviewPack( string packName )
-	{
-		EnsurePreviewQueue();
-		var sources = (_catalog?.Assets ?? []).Where( asset =>
-			string.Equals( asset.PackName, packName, StringComparison.OrdinalIgnoreCase ) ).ToArray();
-		_ = QueuePackGradually( sources );
-		_status.Text = $"Warming shared preview cache for {sources.Length:N0} {packName} asset(s).";
-	}
-
-	private async Task QueuePackGradually( IReadOnlyList<SyntySourceAsset> sources )
-	{
+		if ( _catalog is null || _destroyed )
+			return;
+		var settings = SyntyBrowserSettings.LoadProject();
 		foreach ( var source in sources )
 		{
-			while ( _previewQueue is not null && _previewQueue.PendingCount >= SyntyPreviewQueue.MaximumPending )
-				await Task.Delay( 500 );
-			_previewQueue?.Queue( source, true );
+			var packName = source.PackName ?? _catalog.PackName;
+			if ( IsImported( source )
+				|| _automaticImportAttempts.Contains( source.CacheId )
+				|| !settings.Packs.TryGetValue( packName, out var packSettings )
+				|| !SyntyAutoImportPolicy.CanImport( source, packSettings.DefaultShader, packSettings.Materials.Keys.ToHashSet( StringComparer.OrdinalIgnoreCase ) ) )
+				continue;
+			_automaticImportAttempts.Add( source.CacheId );
+			_automaticImports.Enqueue( source );
 		}
+		if ( !_automaticImportRunning && _automaticImports.Count > 0 )
+			_ = RunAutomaticImports();
 	}
 
-	internal int RetryFailedPreviews()
+	private async Task RunAutomaticImports()
 	{
-		EnsurePreviewQueue();
-		return _previewQueue?.RetryFailed( _catalog?.Assets ?? [] ) ?? 0;
-	}
-
-	private void EnsurePreviewQueue()
-	{
-		if ( _catalog is null || _previewQueue is not null )
-			return;
-		var projectRoot = Project.Current?.GetRootPath() ?? Directory.GetCurrentDirectory();
-		var worker = Path.Combine( projectRoot, "Libraries", "SyntyBrowser", "Tools", "render-preview-requests.ps1" );
-		if ( !File.Exists( worker ) )
-			worker = Path.Combine( projectRoot, "Tools", "render-preview-requests.ps1" );
-		if ( !File.Exists( worker ) )
+		_automaticImportRunning = true;
+		_stopRequested = false;
+		await Task.Yield();
+		while ( !_destroyed && !_stopRequested && _automaticImports.TryDequeue( out var source ) )
 		{
-			_status.Text = $"Preview worker was not found under '{projectRoot}'.";
-			return;
+			if ( ImportConfigured( source ) )
+				await WaitForThumbnail( source );
+			_grid.Update();
+			await Task.Yield();
 		}
-		Directory.CreateDirectory( SyntyBrowserSettings.CacheRoot );
-		_previewQueue = new( _catalog.RootPath, SyntyBrowserSettings.CacheRoot, worker );
-		_previewQueue.Changed += PreviewQueueChanged;
+		_automaticImportRunning = false;
 	}
 
-	private async void PreviewQueueChanged()
+	private async Task RunMassImport( int maximumAssets )
 	{
-		await GameTask.MainThread();
-		_thumbnailCache.Clear();
-		_grid.Update();
-		var snapshot = PreviewQueueStatus();
-		if ( snapshot.Pending > 0 || snapshot.WorkerRunning )
-			_status.Text = $"Preview worker: {snapshot.Pending:N0} queued · {snapshot.Completed:N0} cached · {snapshot.Failed:N0} failed";
+		var settings = SyntyBrowserSettings.LoadProject();
+		var pending = _catalog.Assets
+			.Where( source =>
+			{
+				var packName = source.PackName ?? _catalog.PackName;
+				return !IsImported( source )
+					&& settings.Packs.TryGetValue( packName, out var packSettings )
+					&& SyntyAutoImportPolicy.CanImport(
+						source,
+						packSettings.DefaultShader,
+						packSettings.Materials.Keys.ToHashSet( StringComparer.OrdinalIgnoreCase ) );
+			} )
+			.Take( maximumAssets )
+			.ToArray();
+		if ( pending.Length == 0 )
+		{
+			_status.Text = "All eligible assets are already imported.";
+			return;
+		}
+
+		_automaticImports.Clear();
+		_massImportCancellation = new CancellationTokenSource();
+		_stopButton.Enabled = true;
+		var cancellationToken = _massImportCancellation.Token;
+		var stagingRoot = Path.Combine( Project.Current.GetRootPath(), ".sbox", "synty-import-prepared" );
+		var manifestPath = Path.Combine( stagingRoot, "manifest.json" );
+		var manifest = SyntyMassImportManifest.Load( manifestPath );
+		var runWatch = Stopwatch.StartNew();
+		_massStatus = new SyntyMassImportStatus { Total = pending.Length, Stage = "Preparing", StartedUtc = DateTime.UtcNow };
+		var finalizationQueue = new ConcurrentQueue<SyntyPreparedImport>();
+		var promotionFinished = false;
+		Task finalizationTask = null;
+
+		try
+		{
+			finalizationTask = FinalizePromotedAssets(
+				finalizationQueue,
+				manifest,
+				manifestPath,
+				() => promotionFinished,
+				cancellationToken );
+			Task<SyntyPreparationBatch> preparationTask = null;
+			for ( var offset = 0; offset < pending.Length; offset += PreparationBatchSize )
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				var chunk = pending.Skip( offset ).Take( PreparationBatchSize ).ToArray();
+				_massStatus = _massStatus with { Stage = "Preparing", Current = chunk[0].Name };
+				UpdateMassStatus();
+				preparationTask ??= Task.Run(
+					() => SyntyMassImportPreparation.PrepareBatch(
+						chunk,
+						settings.Packs,
+						stagingRoot,
+						Math.Clamp( Environment.ProcessorCount - 2, 2, 12 ),
+						cancellationToken ),
+					cancellationToken );
+				var preparation = await preparationTask;
+				var nextOffset = offset + PreparationBatchSize;
+				preparationTask = nextOffset >= pending.Length
+					? null
+					: Task.Run(
+						() => SyntyMassImportPreparation.PrepareBatch(
+							pending.Skip( nextOffset ).Take( PreparationBatchSize ).ToArray(),
+							settings.Packs,
+							stagingRoot,
+							Math.Clamp( Environment.ProcessorCount - 2, 2, 12 ),
+							cancellationToken ),
+						cancellationToken );
+				_massStatus = _massStatus with
+				{
+					Prepared = _massStatus.Prepared + preparation.PreparedCount,
+					Failed = _massStatus.Failed + preparation.Imports.Count( item => !item.Success ),
+					PreparationRate = preparation.AssetsPerMinute,
+					Stage = "Promoting"
+				};
+				foreach ( var failed in preparation.Imports.Where( item => !item.Success ) )
+					manifest.Failures[failed.Source.CacheId] = failed.Error;
+				foreach ( var prepared in preparation.Imports.Where( item => item.Success ) )
+					manifest.Prepared.Add( prepared.Source.CacheId );
+				manifest.Save( manifestPath );
+				UpdateMassStatus();
+
+				foreach ( var promotionBatch in preparation.Imports.Where( item => item.Success ).Chunk( PromotionBatchSize ) )
+				{
+					cancellationToken.ThrowIfCancellationRequested();
+					foreach ( var prepared in promotionBatch )
+					{
+						SyntyMassImportPreparation.Promote( prepared, Project.Current.GetAssetsPath() );
+						foreach ( var file in prepared.Files.Where( file => !file.AssetPath.EndsWith( ".vmdl", StringComparison.OrdinalIgnoreCase ) ) )
+						{
+							var asset = AssetSystem.RegisterFile( Path.Combine(
+								Project.Current.GetAssetsPath(),
+								file.AssetPath.Replace( '/', Path.DirectorySeparatorChar ) ) );
+							if ( file.AssetPath.EndsWith( ".vmat", StringComparison.OrdinalIgnoreCase ) )
+								asset?.Compile( false );
+						}
+						var model = AssetSystem.RegisterFile( Path.Combine(
+							Project.Current.GetAssetsPath(),
+							prepared.ModelPath.Replace( '/', Path.DirectorySeparatorChar ) ) );
+						model?.Compile( false );
+						_massStatus = _massStatus with { Promoted = _massStatus.Promoted + 1, Current = prepared.Source.Name };
+						finalizationQueue.Enqueue( prepared );
+					}
+					MainAssetBrowser.Instance?.Local.UpdateAssetList();
+					await Task.Yield();
+				}
+			}
+			promotionFinished = true;
+			_massStatus = _massStatus with { Stage = "Finishing compile and thumbnails" };
+			await finalizationTask;
+			_massStatus = _massStatus with { Stage = "Complete", Elapsed = runWatch.Elapsed };
+		}
+		catch ( OperationCanceledException )
+		{
+			promotionFinished = true;
+			_massStatus = _massStatus with { Stage = "Stopped", StopRequested = true, Elapsed = runWatch.Elapsed };
+		}
+		catch ( Exception exception )
+		{
+			promotionFinished = true;
+			_massImportCancellation?.Cancel();
+			_massStatus = _massStatus with { Stage = "Failed", LastError = exception.Message, Elapsed = runWatch.Elapsed };
+			Log.Error( exception, "Synty mass import failed." );
+		}
+		finally
+		{
+			_massImportCancellation.Dispose();
+			_massImportCancellation = null;
+			_stopButton.Enabled = false;
+			UpdateMassStatus();
+		}
+	}
+
+	private async Task FinalizePromotedAssets(
+		ConcurrentQueue<SyntyPreparedImport> queue,
+		SyntyMassImportManifest manifest,
+		string manifestPath,
+		Func<bool> promotionFinished,
+		CancellationToken cancellationToken )
+	{
+		while ( !promotionFinished() || !queue.IsEmpty )
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			if ( !queue.TryDequeue( out var prepared ) )
+			{
+				await Task.Delay( 25, cancellationToken );
+				continue;
+			}
+
+			var model = AssetSystem.FindByPath( prepared.ModelPath );
+			if ( model is null || model.IsCompileFailed )
+			{
+				_massStatus = _massStatus with { Failed = _massStatus.Failed + 1 };
+				manifest.Failures[prepared.Source.CacheId] = model is null ? "Model was not registered." : "Model compile failed.";
+				manifest.Save( manifestPath );
+				continue;
+			}
+
+			_massStatus = _massStatus with
+			{
+				Compiled = _massStatus.Compiled + 1,
+				Stage = queue.IsEmpty && promotionFinished() ? "Finishing thumbnails" : "Importing and thumbnailing",
+				Current = prepared.Source.Name
+			};
+			UpdateMassStatus();
+			model.GetAssetThumb( true );
+			if ( await WaitForThumbnail( prepared.Source, cancellationToken ) )
+			{
+				_massStatus = _massStatus with { Finalized = _massStatus.Finalized + 1 };
+				manifest.Finalized.Add( prepared.Source.CacheId );
+			}
+			else
+			{
+				_massStatus = _massStatus with { Failed = _massStatus.Failed + 1 };
+				manifest.Failures[prepared.Source.CacheId] = "Native thumbnail timed out.";
+			}
+			manifest.Save( manifestPath );
+			_grid.Update();
+		}
+	}
+
+	private void UpdateMassStatus()
+	{
+		_massStatus = _massStatus with { Elapsed = DateTime.UtcNow - _massStatus.StartedUtc };
+		_status.Text = FormatMassStatus();
+	}
+
+	private string FormatMassStatus()
+	{
+		var remaining = Math.Max( 0, _massStatus.Total - _massStatus.Finalized - _massStatus.Failed );
+		var finalRate = _massStatus.Elapsed.TotalMinutes <= 0 ? 0 : _massStatus.Finalized / _massStatus.Elapsed.TotalMinutes;
+		var eta = finalRate <= 0 ? "—" : TimeSpan.FromMinutes( remaining / finalRate ).ToString( @"hh\:mm\:ss" );
+		return $"{_massStatus.Stage} · prepared {_massStatus.Prepared:N0}/{_massStatus.Total:N0} ({_massStatus.PreparationRate:N0}/min) · promoted {_massStatus.Promoted:N0} · compiled {_massStatus.Compiled:N0} · thumbnailed {_massStatus.Finalized:N0} ({finalRate:N1}/min) · failed {_massStatus.Failed:N0} · ETA {eta}";
+	}
+
+	private async Task WaitForThumbnail( SyntySourceAsset source )
+	{
+		_status.Text = $"Generating thumbnail for {source.Name}...";
+		var deadline = DateTime.UtcNow.AddSeconds( 30 );
+		while ( !_destroyed && !_stopRequested && DateTime.UtcNow < deadline )
+		{
+			if ( GetThumbnail( source ) is not null )
+				return;
+			await Task.Delay( 50 );
+		}
+	}
+
+	private async Task<bool> WaitForThumbnail( SyntySourceAsset source, CancellationToken cancellationToken )
+	{
+		var deadline = DateTime.UtcNow.AddSeconds( 30 );
+		while ( !_destroyed && DateTime.UtcNow < deadline )
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			if ( GetThumbnail( source ) is not null )
+				return true;
+			await Task.Delay( 50, cancellationToken );
+		}
+		return false;
 	}
 
 	private void GenerateVisible()
 	{
-		var queued = QueuePreviewAssets( _grid.VisibleOrNearAssets() );
-		_status.Text = queued > 0 ? $"Queued {queued:N0} visible preview(s)." : "Visible previews are cached or already queued.";
+		QueueAutomaticImports( _grid.VisibleOrNearAssets() );
 	}
 
 	private void ShowCacheStatus()
 	{
-		EnsurePreviewQueue();
-		var snapshot = PreviewQueueStatus();
-		_status.Text = $"{snapshot.Completed:N0} cached · {snapshot.Pending:N0} queued · {snapshot.Skipped:N0} skipped · {snapshot.Failed:N0} failed · {SyntyBrowserSettings.CacheRoot}";
-	}
-
-	private void OpenCacheFolder()
-	{
-		Directory.CreateDirectory( SyntyBrowserSettings.CacheRoot );
-		EditorUtility.OpenFolder( SyntyBrowserSettings.CacheRoot );
+		_status.Text = "Assets import only when requested and use native s&box thumbnails.";
 	}
 
 	internal bool IsImported( SyntySourceAsset source ) => AssetSystem.FindByPath( ModelPath( source ) ) is not null;
@@ -305,17 +569,24 @@ public sealed class SyntyBrowserWindow : Widget
 			ShowDefaultShaderPicker( source, packName, $"Choose default shader for {source.PackDisplayName ?? packName}" );
 			return;
 		}
-		var missing = source.Meshes.SelectMany( mesh => mesh.Materials )
-			.FirstOrDefault( slot => slot.UsesCustomShader && !packSettings.Materials.ContainsKey( slot.Name ) );
-		if ( missing is not null )
-		{
-			_status.Text = $"Custom material '{missing.Name}' needs a mapping in ProjectSettings/SyntyBrowser.json.";
-			return;
-		}
+		ImportConfigured( source, packSettings );
+	}
+
+	private bool ImportConfigured( SyntySourceAsset source, SyntyPackMaterialSettings packSettings = null )
+	{
+		if ( _catalog is null || !source.CanImport )
+			return false;
+		packSettings ??= SyntyBrowserSettings.LoadProject().Packs.GetValueOrDefault( source.PackName ?? _catalog.PackName );
+		if ( !SyntyAutoImportPolicy.CanImport(
+			source,
+			packSettings?.DefaultShader,
+			packSettings?.Materials.Keys.ToHashSet( StringComparer.OrdinalIgnoreCase ) ) )
+			return false;
 		_status.Text = $"Importing {source.Name}...";
 		var result = SyntyImportService.Import( _catalog, source, packSettings );
 		_status.Text = result.Success ? $"Imported {source.Name}" : $"Import failed: {result.Error}";
 		_grid.Update();
+		return result.Success;
 	}
 
 	private void ShowDefaultShaderPicker( SyntySourceAsset source, string packName, string title )
@@ -357,17 +628,6 @@ public sealed class SyntyBrowserWindow : Widget
 		var sources = _grid.ContextSelection( source );
 		var menu = new ContextMenu( this );
 		menu.AddHeading( sources.Count > 1 ? $"{sources.Count:N0} selected assets" : source.DisplayName ?? source.Name );
-		menu.AddOption( sources.Count > 1 ? "Generate Selected Previews" : "Generate Preview", "image",
-			() => QueuePreviewAssets( sources, true ) );
-		menu.AddOption( $"Generate {source.PackDisplayName ?? source.PackName} Pack", "collections",
-			() => QueuePreviewPack( source.PackName ) );
-		menu.AddOption( "Retry Failed Previews", "refresh", () =>
-		{
-			var queued = RetryFailedPreviews();
-			_status.Text = $"Queued {queued:N0} failed preview(s) for retry.";
-		} );
-		menu.AddOption( "Open Shared Cache", "folder_open", OpenCacheFolder );
-		menu.AddSeparator();
 		var tags = menu.AddMenu( "Edit Tags", "label" );
 		foreach ( var tag in SyntyAssetTags.All )
 		{
@@ -613,7 +873,7 @@ public sealed class SyntyBrowserWindow : Widget
 			var viewportTop = Math.Max( 0f, _scroll.ScreenRect.Top - ScreenRect.Top );
 			var viewportBottom = viewportTop + _scroll.Size.y;
 			var card = CardRect( index );
-			return SyntyPreviewVisibility.IsVisibleOrNear(
+			return SyntyAutoImportPolicy.IsVisibleOrNear(
 				card.Top,
 				card.Bottom,
 				viewportTop,
@@ -723,10 +983,6 @@ public sealed class SyntyBrowserWindow : Widget
 			var lastRow = Math.Max( firstRow + 1, (int)MathF.Ceiling( (visibleTop + viewportHeight) / rowHeight ) );
 			var firstIndex = firstRow * Columns;
 			var lastIndex = Math.Min( _assets.Count, lastRow * Columns );
-			var queueFirst = Math.Max( 0, (firstRow - 1) * Columns );
-			var queueLast = Math.Min( _assets.Count, (lastRow + 1) * Columns );
-			for ( var index = queueFirst; index < queueLast; index++ )
-				_window.RequestThumbnail( _assets[index] );
 			for ( var index = firstIndex; index < lastIndex; index++ )
 				DrawCard( index, _assets[index] );
 		}
@@ -753,7 +1009,7 @@ public sealed class SyntyBrowserWindow : Widget
 			else
 			{
 				Paint.SetPen( Theme.TextControl.WithAlpha( 0.45f ) );
-				Paint.DrawText( preview, "Generating preview…", TextFlag.Center );
+				Paint.DrawText( preview, "Importing for preview...", TextFlag.Center );
 			}
 
 			Paint.SetPen( Theme.Text );

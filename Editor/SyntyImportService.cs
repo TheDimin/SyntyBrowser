@@ -42,7 +42,7 @@ public static class SyntyImportService
 		var destinationModel = Path.Combine( modelDirectory, $"{source.Id}.vmdl" );
 		var stageRoot = Path.Combine( Project.Current.GetRootPath(), ".sbox", "synty-import-staging", Guid.NewGuid().ToString( "N" ) );
 		var backupRoot = Path.Combine( stageRoot, "previous-output" );
-		var affectedFiles = GetAffectedSharedFiles( packRootPath, source, materialDirectory, textureDirectory )
+		var affectedFiles = GetAffectedSharedFiles( packRootPath, source, packSettings, materialDirectory, textureDirectory )
 			.Concat( [destinationFbx, destinationModel, $"{destinationModel}_c"] )
 			.Distinct( StringComparer.OrdinalIgnoreCase )
 			.ToArray();
@@ -55,27 +55,25 @@ public static class SyntyImportService
 			File.Copy( source.SourceFbxPath, stagedFbx, true );
 			Directory.CreateDirectory( modelDirectory );
 			File.Copy( stagedFbx, destinationFbx, true );
-			var fbxAsset = AssetSystem.RegisterFile( destinationFbx )
+			FbxEmbeddedMediaPathSanitizer.SanitizeFile( destinationFbx );
+			var registeredFbx = AssetSystem.RegisterFile( destinationFbx )
 				?? throw new InvalidOperationException( $"Could not register imported FBX '{destinationFbx}'." );
 
 			var materialPaths = CreatePackMaterials( packRootPath, source, packSettings, materialDirectory, textureDirectory );
-			var existingModelAsset = AssetSystem.FindByPath( ToAssetPath( destinationModel ) );
-			if ( existingModelAsset is not null )
-				existingModelAsset.Delete();
-			else if ( File.Exists( destinationModel ) )
-				File.Delete( destinationModel );
-			var generatedAsset = EditorUtility.CreateModelFromMeshFile( fbxAsset, destinationModel )
-				?? throw new InvalidOperationException( $"s&box could not create a VMDL from '{fbxAsset.Path}'." );
-			if ( generatedAsset.IsCompileFailed )
-				throw new InvalidOperationException( $"Model '{generatedAsset.Path}' failed to compile." );
-			var generatedModel = generatedAsset.Path;
-			ConfigureModel(
-				AssetSystem.FindByPath( generatedModel ),
+			var generatedModel = ToAssetPath( destinationModel );
+			WriteModel(
+				destinationModel,
+				generatedModel.Replace( ".vmdl", ".fbx", StringComparison.OrdinalIgnoreCase ),
 				source,
 				FbxSourceMaterialInspection.ReadMaterialReferences( destinationFbx ),
 				materialPaths.BySlot );
+			var generatedAsset = AssetSystem.RegisterFile( destinationModel )
+				?? throw new InvalidOperationException( $"Could not register model '{destinationModel}'." );
+			generatedAsset.Compile( false );
+			if ( generatedAsset.IsCompileFailed )
+				throw new InvalidOperationException( $"Model '{generatedAsset.Path}' failed to compile." );
+			AssetSystem.FindByPath( generatedModel )?.GetAssetThumb( true );
 			MainAssetBrowser.Instance?.Local.UpdateAssetList();
-			MainAssetBrowser.Instance?.Local.FocusOnAsset( AssetSystem.FindByPath( generatedModel ) );
 			return new SyntyImportResult
 			{
 				AssetId = source.Id,
@@ -121,34 +119,38 @@ public static class SyntyImportService
 		var materials = new List<string>();
 		var textures = new List<string>();
 		var bySlot = new Dictionary<string, string>( StringComparer.OrdinalIgnoreCase );
-		foreach ( var slot in source.Meshes.SelectMany( mesh => mesh.Materials ).DistinctBy( material => material.Name, StringComparer.OrdinalIgnoreCase ) )
+		var byOutput = new Dictionary<string, string>( StringComparer.OrdinalIgnoreCase );
+		var resolvedSlots = SyntyMaterialSlotResolver.Resolve( source, settings.SlotOverrides );
+		foreach ( var resolved in resolvedSlots.DistinctBy( slot => slot.OutputName, StringComparer.OrdinalIgnoreCase ) )
 		{
+			var slot = resolved.Source;
 			var mapping = settings.Materials.GetValueOrDefault( slot.Name );
-			var shader = mapping?.Shader ?? settings.DefaultShader;
-			if ( slot.UsesCustomShader && mapping is null )
-				throw new InvalidOperationException( $"Custom material '{slot.Name}' needs a saved shader mapping." );
+			var shader = resolved.Override?.Shader ?? mapping?.Shader ?? settings.DefaultShader;
 			var parameters = SyntyMaterialImportDefaults.ParametersFor( shader );
 			if ( mapping?.Parameters is not null )
 			{
 				foreach ( var parameter in mapping.Parameters )
 					parameters[parameter.Key] = parameter.Value;
 			}
+			if ( resolved.Override?.Parameters is not null )
+			{
+				foreach ( var parameter in resolved.Override.Parameters )
+					parameters[parameter.Key] = parameter.Value;
+			}
 
 			string textureAssetPath = null;
-			if ( !string.IsNullOrWhiteSpace( slot.TextureHint ) )
+			var textureHint = resolved.Override?.TextureHint ?? slot.TextureHint;
+			var sourceTexture = FindTexture( packRootPath, textureHint ?? resolved.Source.Name );
+			if ( sourceTexture is not null )
 			{
-				var sourceTexture = FindTexture( packRootPath, slot.TextureHint );
-				if ( sourceTexture is not null )
-				{
 					var destination = Path.Combine( textureDirectory, Path.GetFileName( sourceTexture ) );
 					CopyFileIfChanged( sourceTexture, destination );
 					AssetSystem.RegisterFile( destination );
 					textureAssetPath = ToAssetPath( destination );
 					textures.Add( textureAssetPath );
-				}
 			}
 
-			var materialPath = Path.Combine( materialDirectory, $"{SyntySourceCatalog.NormalizeId( slot.Name )}.vmat" );
+			var materialPath = Path.Combine( materialDirectory, $"{SyntySourceCatalog.NormalizeId( resolved.OutputName )}.vmat" );
 			var materialDocument = BuildMaterialDocument(
 				shader,
 				textureAssetPath,
@@ -161,47 +163,44 @@ public static class SyntyImportService
 			var materialAsset = AssetSystem.RegisterFile( materialPath )
 				?? throw new InvalidOperationException( $"Could not register material '{materialPath}'." );
 			if ( materialChanged )
-				materialAsset.Compile( true );
+				materialAsset.Compile( false );
 			if ( materialAsset.IsCompileFailed )
 				throw new InvalidOperationException( $"Material '{materialAsset.Path}' failed to compile." );
 			materials.Add( materialAsset.Path );
-			bySlot[slot.Name] = materialAsset.Path;
+			byOutput[resolved.OutputName] = materialAsset.Path;
 		}
+		foreach ( var resolved in resolvedSlots )
+			bySlot[resolved.BindingKey] = byOutput[resolved.OutputName];
 		return (materials.ToArray(), textures.Distinct( StringComparer.OrdinalIgnoreCase ).ToArray(), bySlot);
 	}
 
-	private static void ConfigureModel(
-		Asset modelAsset,
+	private static void WriteModel(
+		string destinationModel,
+		string fbxAssetPath,
 		SyntySourceAsset source,
 		IReadOnlyList<string> sourceMaterialReferences,
 		IReadOnlyDictionary<string, string> bySlot )
 	{
-		if ( modelAsset is null )
-			throw new InvalidOperationException( $"Could not find generated model asset for '{source.Name}'." );
-		var materialTargets = source.Meshes
-			.SelectMany( mesh => mesh.Materials )
-			.DistinctBy( material => material.Name, StringComparer.OrdinalIgnoreCase )
-			.Select( material => bySlot[material.Name].ToLowerInvariant() )
-			.ToArray();
+		var resolvedSlots = SyntyMaterialSlotResolver.Resolve( source, null );
+		var materialTargets = SyntyModelDocument.AlignMaterialTargets(
+			sourceMaterialReferences,
+			resolvedSlots.Select( resolved => resolved.Source.Name ).ToArray(),
+			resolvedSlots.Select( resolved => bySlot[resolved.BindingKey].ToLowerInvariant() ).ToArray() );
 		var materialsToRemap = materialTargets.Length == 0
 			? Array.Empty<string>()
 			: sourceMaterialReferences;
-		var document = File.ReadAllText( modelAsset.AbsolutePath );
 		var importScale = FbxUnitScaleInspection.ReadImportScale( source.SourceFbxPath )
 			* FbxMeshTransformInspection.ReadImportScaleCompensation(
 				source.SourceFbxPath,
 				source.Meshes.Select( mesh => mesh.Name ) );
-		var configured = SyntyModelDocument.Configure(
-			document,
+		var configured = SyntyModelDocument.Create(
+			fbxAssetPath,
 			materialsToRemap,
 			materialTargets,
+			importScale,
 			addRenderHullCollision: true,
-			importScale: importScale );
-		File.WriteAllText( modelAsset.AbsolutePath, configured );
-		AssetSystem.RegisterFile( modelAsset.AbsolutePath );
-		modelAsset.Compile( true );
-		if ( modelAsset.IsCompileFailed )
-			throw new InvalidOperationException( $"Model '{modelAsset.Path}' failed after configuring materials and collision." );
+			fallbackMaterial: materialTargets.FirstOrDefault() ?? bySlot.Values.FirstOrDefault() );
+		File.WriteAllText( destinationModel, configured );
 	}
 
 	private static string FindTexture( string root, string hint )
@@ -238,16 +237,17 @@ public static class SyntyImportService
 	private static string[] GetAffectedSharedFiles(
 		string packRootPath,
 		SyntySourceAsset source,
+		SyntyPackMaterialSettings settings,
 		string materialDirectory,
 		string textureDirectory )
 	{
 		var files = new HashSet<string>( StringComparer.OrdinalIgnoreCase );
-		foreach ( var slot in source.Meshes.SelectMany( mesh => mesh.Materials ).DistinctBy( material => material.Name, StringComparer.OrdinalIgnoreCase ) )
+		foreach ( var resolved in SyntyMaterialSlotResolver.Resolve( source, settings.SlotOverrides )
+			.DistinctBy( slot => slot.OutputName, StringComparer.OrdinalIgnoreCase ) )
 		{
-			files.Add( Path.Combine( materialDirectory, $"{SyntySourceCatalog.NormalizeId( slot.Name )}.vmat" ) );
-			if ( string.IsNullOrWhiteSpace( slot.TextureHint ) )
-				continue;
-			var sourceTexture = FindTexture( packRootPath, slot.TextureHint );
+			files.Add( Path.Combine( materialDirectory, $"{SyntySourceCatalog.NormalizeId( resolved.OutputName )}.vmat" ) );
+			var textureHint = resolved.Override?.TextureHint ?? resolved.Source.TextureHint;
+			var sourceTexture = FindTexture( packRootPath, textureHint ?? resolved.Source.Name );
 			if ( sourceTexture is not null )
 				files.Add( Path.Combine( textureDirectory, Path.GetFileName( sourceTexture ) ) );
 		}

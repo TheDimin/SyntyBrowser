@@ -29,25 +29,6 @@ public static class SyntyBrowserMcpTools
 		};
 	}
 
-	/// <summary>Reports the shared preview cache location, persisted results, and live worker queue.</summary>
-	[McpTool.ReadOnly( "synty_preview_cache_status" )]
-	public static object PreviewCacheStatus()
-	{
-		var persisted = new SyntyPreviewStateStore( SyntyBrowserSettings.CacheRoot ).GetStatus();
-		var window = SyntyBrowserWindow.OpenDock();
-		var queue = window.PreviewQueueStatus();
-		return new
-		{
-			persisted.CacheRoot,
-			RendererVersion = SyntyPreviewCache.RendererVersion,
-			persisted.Completed,
-			queue.Pending,
-			queue.WorkerRunning,
-			persisted.Skipped,
-			persisted.Failed
-		};
-	}
-
 	[McpTool.ReadOnly( "synty_inspect_asset" )]
 	public static object InspectAsset( string assetId )
 	{
@@ -59,55 +40,16 @@ public static class SyntyBrowserMcpTools
 	[McpTool( "synty_rescan" )]
 	public static object Rescan() => CatalogStatus();
 
-	/// <summary>Queues one asset for shared-cache preview generation.</summary>
-	[McpTool( "synty_queue_thumbnail" )]
-	public static object QueueThumbnail( string assetId )
-	{
-		var catalog = RequireCatalog();
-		var source = FindAsset( catalog, assetId )
-			?? throw new FileNotFoundException( $"Synty asset '{assetId}' was not found.", assetId );
-		var window = SyntyBrowserWindow.OpenDock();
-		var queued = window.QueuePreviewAssets( [source], true );
-		return new { source.CacheId, Queued = queued == 1, PendingCount = window.PendingThumbnailCount };
-	}
+	[McpTool.ReadOnly( "synty_import_status" )]
+	public static SyntyMassImportStatus ImportStatus() => SyntyBrowserWindow.CurrentImportStatus;
 
-	/// <summary>Returns current shared preview worker counts without rebuilding the source catalog.</summary>
-	[McpTool.ReadOnly( "synty_thumbnail_queue_status" )]
-	public static object ThumbnailQueueStatus()
-	{
-		var status = SyntyBrowserWindow.OpenDock().PreviewQueueStatus();
-		return new
-		{
-			PendingCount = status.Pending,
-			status.WorkerRunning,
-			status.Completed,
-			status.Skipped,
-			status.Failed
-		};
-	}
+	[McpTool( "synty_import_stop" )]
+	public static SyntyMassImportStatus StopImport() => SyntyBrowserWindow.StopCurrentImport();
 
-	/// <summary>Queues every eligible asset in one pack while keeping the live queue bounded.</summary>
-	[McpTool( "synty_queue_preview_pack" )]
-	public static object QueuePreviewPack( string packName )
-	{
-		var catalog = RequireCatalog();
-		var normalized = SyntySourceCatalog.SanitizeName( packName );
-		var count = catalog.Assets.Count( asset => string.Equals( asset.PackName, normalized, StringComparison.OrdinalIgnoreCase ) );
-		if ( count == 0 )
-			throw new FileNotFoundException( $"Synty pack '{packName}' was not found.", packName );
-		var window = SyntyBrowserWindow.OpenDock();
-		window.QueuePreviewPack( normalized );
-		return new { PackName = normalized, AssetCount = count, CacheRoot = SyntyBrowserSettings.CacheRoot };
-	}
-
-	/// <summary>Explicitly retries preview jobs that exhausted automatic retries.</summary>
-	[McpTool( "synty_retry_failed_previews" )]
-	public static object RetryFailedPreviews()
-	{
-		var window = SyntyBrowserWindow.OpenDock();
-		var queued = window.RetryFailedPreviews();
-		return new { Queued = queued, PendingCount = window.PendingThumbnailCount };
-	}
+	/// <summary>Starts an end-to-end live import sample. Preparation, promotion, compilation, and serialized native thumbnails are measured by synty_import_status.</summary>
+	[McpTool( "synty_import_benchmark" )]
+	public static SyntyMassImportStatus ImportBenchmark( int assetCount = 1000 ) =>
+		SyntyBrowserWindow.StartImportBenchmark( assetCount );
 
 	[McpTool( "synty_import_asset" )]
 	public static SyntyImportResult ImportAsset( string assetId )

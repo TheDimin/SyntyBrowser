@@ -73,6 +73,26 @@ public sealed class SyntySourceCatalogTests
 	}
 
 	[TestMethod]
+	public void TextureLocator_InfersCustomShaderTextureNames()
+	{
+		var root = Path.Combine( Path.GetTempPath(), $"synty-textures-{Guid.NewGuid():N}" );
+		Directory.CreateDirectory( root );
+		try
+		{
+			var atlas = Path.Combine( root, "PolygonDarkFortress_Texture_01_A.png" );
+			var brick = Path.Combine( root, "Brick_Large_Texture_01.png" );
+			File.WriteAllBytes( atlas, [] );
+			File.WriteAllBytes( brick, [] );
+
+			Assert.AreEqual( atlas, SyntyTextureLocator.Find( root, "PolygonDarkFortress_Mat_01_A" ) );
+			Assert.AreEqual( brick, SyntyTextureLocator.Find( root, "Brick_Large_01" ) );
+		}
+		finally
+		{
+			Directory.Delete( root, true );
+		}
+	}
+	[TestMethod]
 	public void MaterialList_ProducesOneAssetPerPrefabAndGroupsLods()
 	{
 		var fbx = Path.Combine( Path.GetTempPath(), "SM_Env_Tree_01.fbx" );
@@ -264,6 +284,64 @@ public sealed class SyntySourceCatalogTests
 	};
 
 	[TestMethod]
+	public void ModelDocument_CreateWritesFinalImportInOnePass()
+	{
+		var document = SyntyModelDocument.Create(
+			"ThirdParty/Synty/Pack/Models/prop.fbx",
+			["material_0", "material_1"],
+			["thirdparty/synty/pack/materials/red.vmat", "thirdparty/synty/pack/materials/blue.vmat"],
+			0.01f );
+
+		StringAssert.Contains( document, "filename = \"ThirdParty/Synty/Pack/Models/prop.fbx\"" );
+		StringAssert.Contains( document, "import_scale = 0.01" );
+		StringAssert.Contains( document, "from = \"material_0\"" );
+		StringAssert.Contains( document, "to = \"thirdparty/synty/pack/materials/blue.vmat\"" );
+		StringAssert.Contains( document, "_class = \"PhysicsHullFromRender\"" );
+		Assert.AreEqual( 1, document.Split( "_class = \"RenderMeshFile\"" ).Length - 1 );
+	}
+
+	[TestMethod]
+	public void ModelDocument_AlignsFbxMaterialsByNameAndFallsBackByOrder()
+	{
+		CollectionAssert.AreEqual(
+			new[] { "blue.vmat", "blue.vmat", "blue.vmat" },
+			SyntyModelDocument.AlignMaterialTargets(
+				["Material_Blue.vmat", "unknown.vmat", "another.vmat"],
+				["Material_Red", "Material_Blue"],
+				["red.vmat", "blue.vmat"] ) );
+	}
+
+	[TestMethod]
+	public void MassImportManifest_RoundTripsResumeStateAndRecoversFromCorruption()
+	{
+		var directory = Path.Combine( Path.GetTempPath(), $"synty-manifest-{Guid.NewGuid():N}" );
+		var path = Path.Combine( directory, "manifest.json" );
+		try
+		{
+			var manifest = new SyntyMassImportManifest();
+			manifest.Prepared.Add( "pack_asset-a" );
+			manifest.Finalized.Add( "pack_asset-b" );
+			manifest.Failures["pack_asset-c"] = "compile failed";
+			manifest.Save( path );
+
+			var resumed = SyntyMassImportManifest.Load( path );
+			Assert.IsTrue( resumed.Prepared.Contains( "PACK_ASSET-A" ) );
+			Assert.IsTrue( resumed.Finalized.Contains( "pack_asset-b" ) );
+			Assert.AreEqual( "compile failed", resumed.Failures["pack_asset-c"] );
+
+			File.WriteAllText( path, "{corrupt" );
+			var recovered = SyntyMassImportManifest.Load( path );
+			Assert.HasCount( 0, recovered.Prepared );
+			Assert.HasCount( 0, recovered.Finalized );
+		}
+		finally
+		{
+			if ( Directory.Exists( directory ) )
+				Directory.Delete( directory, true );
+		}
+	}
+
+	[TestMethod]
 	public void ModelDocument_MapsFbxSlotToAuthoritativeMaterialAndAddsCollision()
 	{
 		const string generated = """
@@ -406,7 +484,49 @@ public sealed class SyntySourceCatalogTests
 		}
 	}
 
+	[TestMethod]
+	public void FbxMeshTransformInspection_CompensatesLegacyMeterAuthoredVesselPiece()
+	{
+		var path = Path.Combine( Path.GetTempPath(), $"{Guid.NewGuid():N}.fbx" );
+		try
+		{
+			WriteLegacyVesselMeshFbx( path );
+
+			Assert.AreEqual(
+				100.0,
+				FbxMeshTransformInspection.ReadImportScaleCompensation(
+					path,
+					["SM_Veh_Boat_Warship_01_Hull_Pirate"] ),
+				0.00001 );
+			Assert.AreEqual(
+				100.0,
+				FbxMeshTransformInspection.ReadImportScaleCompensation( path, [] ),
+				0.00001,
+				"Standalone vessel pieces without MaterialList mesh selections must still be inspected." );
+		}
+		finally
+		{
+			File.Delete( path );
+		}
+	}
+
+	private static void WriteLegacyVesselMeshFbx( string path )
+	{
+		WriteLegacyMeshFbx(
+			path,
+			"SM_Veh_Boat_Warship_01_Hull_Pirate",
+			new double[] { 0, 0, 0, 10.324, 0, 0, 0, 39.7489, 0, 0, 0, 17.1532 } );
+	}
+
 	private static void WriteLegacyCentimeterMeshFbx( string path )
+	{
+		WriteLegacyMeshFbx(
+			path,
+			"SM_Bld_Stall_03",
+			new double[] { 0, 0, 0, 354, 0, 0, 0, 300, 0, 0, 0, 298 } );
+	}
+
+	private static void WriteLegacyMeshFbx( string path, string meshName, double[] vertices )
 	{
 		using var stream = File.Create( path );
 		using var writer = new BinaryWriter( stream );
@@ -416,18 +536,18 @@ public sealed class SyntySourceCatalogTests
 		WriteNode(
 			writer,
 			"Geometry",
-			[('L', 1L), ('S', "Geometry::SM_Bld_Stall_03"), ('S', "Mesh")],
+			[('L', 1L), ('S', $"Geometry::{meshName}"), ('S', "Mesh")],
 			() => WriteNode(
 				writer,
 				"Vertices",
-				[('d', new double[] { 0, 0, 0, 354, 0, 0, 0, 300, 0, 0, 0, 298 })],
+				[('d', vertices)],
 				null,
 				false ),
 			false );
 		WriteNode(
 			writer,
 			"Model",
-			[('L', 2L), ('S', "Model::SM_Bld_Stall_03"), ('S', "Mesh")],
+			[('L', 2L), ('S', $"Model::{meshName}"), ('S', "Mesh")],
 			() => WriteNode(
 				writer,
 				"Properties70",
