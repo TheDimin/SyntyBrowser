@@ -2,7 +2,7 @@
   "profiles": {
     "Editor": {
       "commandName": "Executable",
-      "executablePath": "C:/Program Files (x86)/Steam/steamapps/common/sbox/sbox-dev.exe",
+      "executablePath": "../../../../../sbox-public/game/sbox-dev.exe",
       "commandLineArgs": "-project \u0022E:\\Projects\\survive\\Libraries\\SyntyBrowser\\SyntyBrowser.sbproj\u0022"
     }
   }
