@@ -266,7 +266,11 @@ public static partial class SyntySourceCatalog
 		var canonical = matches.Where( path => Path.GetDirectoryName( path )
 			?.Split( Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar )
 			.Any( part => string.Equals( part, "FBX", StringComparison.OrdinalIgnoreCase ) ) == true ).ToArray();
-		return canonical.Length == 1 ? canonical[0] : null;
+		if ( canonical.Length == 1 ) return canonical[0];
+		var packSpecific = canonical.Where( path => !Path.GetDirectoryName( path )!
+			.Split( Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar )
+			.Any( part => string.Equals( part, "Generic", StringComparison.OrdinalIgnoreCase ) ) ).ToArray();
+		return packSpecific.Length == 1 ? packSpecific[0] : null;
 	}
 	public static string NormalizeId( string value )
 	{
